@@ -1,0 +1,16 @@
+## Ignore esp-idf building and flashing tool
+esp-idf/
+sdkconfig.old
+dependencies.lock
+
+managed_components/lvgl__lvgl
+managed_components/lvgl__lvgl_esp32_drivers
+
+## Ignore build things
+build/
+
+.cache/
+main/.cache/
+
+compile_commands.json
+!components/lvgl__lvgl_esp32_drivers/
