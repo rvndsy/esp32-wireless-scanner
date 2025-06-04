@@ -23,6 +23,7 @@
 
 #include "conf.h"
 #include "scanner.h"
+#include "port-scanner.h"
 
 /*   WiFi   */
 #include "esp_wifi.h"
@@ -297,11 +298,15 @@ static void show_found_ip_list() {
             lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
             ipv4_scan_btn_list[i] = btn;
 
+            scan_ports(*(esp_ip4_addr_t*)&current_ipv4_info->ip); // Why on Earth is this needed?!
+
             lv_obj_set_event_cb(btn, ipv4_scan_list_event_handler);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         xSemaphoreGive(xGuiSemaphore);
     }
+
+    return;
 }
 
 void wifi_scan_event_handler(lv_obj_t * obj, lv_event_t event) {
