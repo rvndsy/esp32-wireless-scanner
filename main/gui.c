@@ -35,20 +35,21 @@ lv_obj_t * wifi_scan_list_label;
 lv_obj_t * wifi_connected_status_label;
 
 /* WiFi network device scanning tab */
-lv_obj_t * device_scan_tab;
-lv_obj_t * device_scan_btn;
+lv_obj_t * ipv4_scan_tab;
+lv_obj_t * ipv4_scan_btn;
+lv_obj_t * ipv4_scan_list;
 
 /* Placeholder tabs */
 lv_obj_t * tab3;
 lv_obj_t * tab4;
 
 /* Wifi connect pop-up */
-lv_obj_t * mbox_connect;
-lv_obj_t * mbox_password_textarea;
-lv_obj_t * mbox_title_label;
-lv_obj_t * mbox_connect_btn;
-lv_obj_t * mbox_btn_label;
-lv_obj_t * mbox_close_btn;
+lv_obj_t * wifi_popup_connect;
+lv_obj_t * wifi_popup_password_textarea;
+lv_obj_t * wifi_popup_title_label;
+lv_obj_t * wifi_popup_connect_btn;
+lv_obj_t * wifi_popup_btn_label;
+lv_obj_t * wifi_popup_close_btn;
 
 lv_obj_t * popup_box;
 lv_obj_t * popup_msg_label;
@@ -81,6 +82,7 @@ void build_gui(void) {
     tabview = lv_tabview_create(lv_scr_act(), NULL);
     wifi_scan_tab = lv_tabview_add_tab(tabview, "Wifi");
 
+    // TODO: Remove and move to a simple message in statusbar
     wifi_connected_status_label = lv_label_create(wifi_scan_tab, NULL);
     lv_label_set_text(wifi_connected_status_label, "Not connected to Wi-Fi...");
     lv_obj_add_style(wifi_connected_status_label, LV_TABVIEW_PART_BG, &desc_text_style);
@@ -90,9 +92,13 @@ void build_gui(void) {
     lv_obj_set_size(wifi_list, DISPLAY_W - 20, DISPLAY_H);
     lv_obj_align(wifi_list, wifi_scan_tab, LV_ALIGN_IN_TOP_MID, 0, 20);
 
-    device_scan_tab = lv_tabview_add_tab(tabview, "Scan");
-    device_scan_btn = lv_btn_create(device_scan_tab, NULL);
-    lv_obj_align(device_scan_btn, device_scan_tab, LV_ALIGN_IN_TOP_LEFT, 10, 10);
+    ipv4_scan_tab = lv_tabview_add_tab(tabview, "Scan");
+    ipv4_scan_btn = lv_btn_create(ipv4_scan_tab, NULL);
+    lv_obj_align(ipv4_scan_btn, ipv4_scan_tab, LV_ALIGN_IN_TOP_LEFT, 10, 10);
+    ipv4_scan_list = lv_list_create(ipv4_scan_tab, NULL);
+    lv_obj_set_size(ipv4_scan_list, DISPLAY_W - 20, DISPLAY_H);
+    lv_obj_align(ipv4_scan_list, ipv4_scan_tab, LV_ALIGN_IN_TOP_MID, 0, 40);
+
 
     // Placeholders...
     tab3 = lv_tabview_add_tab(tabview, "Tab3");
@@ -121,8 +127,8 @@ void on_focus_keyboard_popup_cb(lv_obj_t *obj, lv_event_t e) {
 }
 
 void close_btn_event_cb(lv_obj_t *obj, lv_event_t e) {
-    if (obj == mbox_close_btn) {
-        lv_obj_move_background(mbox_connect);
+    if (obj == wifi_popup_close_btn) {
+        lv_obj_move_background(wifi_popup_connect);
         lv_obj_set_hidden(keyboard, 1);
     } else if (popup_box_close_btn) {
         lv_obj_move_background(popup_box);
@@ -131,38 +137,38 @@ void close_btn_event_cb(lv_obj_t *obj, lv_event_t e) {
 }
 
 void build_pwmsg_box() {
-    mbox_connect = lv_obj_create(lv_scr_act(), NULL);
-    lv_obj_add_style(mbox_connect, LV_TABVIEW_PART_BG, &border_style);
-    lv_obj_set_size(mbox_connect, DISPLAY_W * 3 / 4, DISPLAY_H * 2 / 3);
-    lv_obj_align(mbox_connect, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+    wifi_popup_connect = lv_obj_create(lv_scr_act(), NULL);
+    lv_obj_add_style(wifi_popup_connect, LV_TABVIEW_PART_BG, &border_style);
+    lv_obj_set_size(wifi_popup_connect, DISPLAY_W * 3 / 4, DISPLAY_H * 2 / 3);
+    lv_obj_align(wifi_popup_connect, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
 
-    mbox_title_label = lv_label_create(mbox_connect, NULL);
-    lv_label_set_text(mbox_title_label, "Selected WiFi SSID: ThatProject");
-    lv_obj_align(mbox_title_label, mbox_connect, LV_ALIGN_IN_TOP_LEFT, 0, 0);
+    wifi_popup_title_label = lv_label_create(wifi_popup_connect, NULL);
+    lv_label_set_text(wifi_popup_title_label, "Selected WiFi SSID: ThatProject");
+    lv_obj_align(wifi_popup_title_label, wifi_popup_connect, LV_ALIGN_IN_TOP_LEFT, 0, 0);
 
-    mbox_password_textarea = lv_textarea_create(mbox_connect, NULL);
-    lv_textarea_set_text(mbox_password_textarea, "");
-    lv_obj_set_size(mbox_password_textarea, DISPLAY_W / 2, 40);
-    lv_obj_align(mbox_password_textarea, mbox_title_label, LV_ALIGN_IN_TOP_LEFT, 5, 30);
-    lv_obj_set_event_cb(mbox_password_textarea, on_focus_keyboard_popup_cb);
-    lv_textarea_set_placeholder_text(mbox_password_textarea, "Password?");
-    lv_keyboard_set_textarea(keyboard, mbox_password_textarea); /* Focus it on one of the text areas to start */
+    wifi_popup_password_textarea = lv_textarea_create(wifi_popup_connect, NULL);
+    lv_textarea_set_text(wifi_popup_password_textarea, "");
+    lv_obj_set_size(wifi_popup_password_textarea, DISPLAY_W / 2, 40);
+    lv_obj_align(wifi_popup_password_textarea, wifi_popup_title_label, LV_ALIGN_IN_TOP_LEFT, 5, 30);
+    lv_obj_set_event_cb(wifi_popup_password_textarea, on_focus_keyboard_popup_cb);
+    lv_textarea_set_placeholder_text(wifi_popup_password_textarea, "Password?");
+    lv_keyboard_set_textarea(keyboard, wifi_popup_password_textarea); /* Focus it on one of the text areas to start */
     lv_keyboard_set_cursor_manage(keyboard, true); /* Automatically show/hide cursors on text areas */
 
-    mbox_connect_btn = lv_btn_create(mbox_connect, NULL);
-    lv_obj_set_size(mbox_connect_btn, DISPLAY_W / 4, DISPLAY_H / 8);
-    lv_obj_align(mbox_connect_btn, mbox_connect, LV_ALIGN_IN_BOTTOM_LEFT, 5, 5);
-    mbox_btn_label = lv_label_create(mbox_connect_btn, NULL);
-    lv_label_set_text(mbox_btn_label, "Connect");
-    lv_obj_align(mbox_btn_label, mbox_connect_btn, LV_ALIGN_CENTER, 0, 0);
+    wifi_popup_connect_btn = lv_btn_create(wifi_popup_connect, NULL);
+    lv_obj_set_size(wifi_popup_connect_btn, DISPLAY_W / 4, DISPLAY_H / 8);
+    lv_obj_align(wifi_popup_connect_btn, wifi_popup_connect, LV_ALIGN_IN_BOTTOM_LEFT, 5, 5);
+    wifi_popup_btn_label = lv_label_create(wifi_popup_connect_btn, NULL);
+    lv_label_set_text(wifi_popup_btn_label, "Connect");
+    lv_obj_align(wifi_popup_btn_label, wifi_popup_connect_btn, LV_ALIGN_CENTER, 0, 0);
 
-    mbox_close_btn = lv_btn_create(mbox_connect, NULL);
-    lv_obj_set_size(mbox_close_btn, DISPLAY_W / 4, DISPLAY_H / 8);
-    lv_obj_set_event_cb(mbox_close_btn, close_btn_event_cb);
-    lv_obj_align(mbox_close_btn, mbox_connect, LV_ALIGN_IN_BOTTOM_RIGHT, 5, 5);
-    lv_obj_t * mbox_btn_label = lv_label_create(mbox_close_btn, NULL);
+    wifi_popup_close_btn = lv_btn_create(wifi_popup_connect, NULL);
+    lv_obj_set_size(wifi_popup_close_btn, DISPLAY_W / 4, DISPLAY_H / 8);
+    lv_obj_set_event_cb(wifi_popup_close_btn, close_btn_event_cb);
+    lv_obj_align(wifi_popup_close_btn, wifi_popup_connect, LV_ALIGN_IN_BOTTOM_RIGHT, 5, 5);
+    lv_obj_t * mbox_btn_label = lv_label_create(wifi_popup_close_btn, NULL);
     lv_label_set_text(mbox_btn_label, "Cancel");
-    lv_obj_align(mbox_btn_label, mbox_close_btn, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(mbox_btn_label, wifi_popup_close_btn, LV_ALIGN_CENTER, 0, 0);
 }
 
 void show_popup_msg_box(char * title, char * msg) {

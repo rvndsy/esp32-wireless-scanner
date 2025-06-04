@@ -56,7 +56,9 @@ char line_buf[64*2];
 #define LV_TICK_PERIOD_MS 1
 
 #include "gui.h"
+#define IPV4_LIST_SIZE 254
 static lv_obj_t * wifi_btn_list[MAX_SCAN_RESULTS];
+static lv_obj_t * ipv4_scan_btn_list[IPV4_LIST_SIZE];
 /************/
 
 
@@ -93,7 +95,9 @@ typedef enum {
     NETWORK_CONNECT_FAILED,
 } Network_Status_t;
 Network_Status_t network_status = NONE;
+Network_Status_t prev_network_status = NONE;
 
+ipv4_list * current_ipv4_list = NULL;
 
 esp_err_t wifi_init(void) {
     esp_err_t ret = esp_netif_init();
@@ -122,31 +126,6 @@ esp_err_t wifi_init(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ret;
-}
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    ESP_LOGI(TAG, "Wi-Fi event handler called with event_id: %d", event_id);
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "Connecting to AP...");
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (wifi_retry_count < MAX_WIFI_RETRY_ATTEMPT) {
-            ESP_LOGI(TAG, "Reconnecting to AP...");
-            esp_wifi_connect();
-            wifi_retry_count++;
-        } else {
-            xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
-        }
-    }
-}
-
-static void ip_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t * event = (ip_event_got_ip_t*)event_data;
-        ESP_LOGI(TAG, "STA IP: "IPSTR, IP2STR(&event->ip_info.ip));
-        wifi_retry_count = 0;
-        xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
-    }
 }
 
 int wifi_connect(char* wifi_password) {
@@ -243,18 +222,32 @@ static void tickInc(void *arg) {
     lv_tick_inc(LV_TICK_PERIOD_MS);
 }
 
-static void list_event_handler(lv_obj_t * obj, lv_event_t event) {
+static void wifi_list_event_handler(lv_obj_t * obj, lv_event_t event) {
     for (int i = 0; i < MAX_SCAN_RESULTS; i++) {
         if (wifi_btn_list[i] == obj) { //what could go wrong
-            lv_label_set_text_fmt(mbox_title_label, "%s", ap_records[i].ssid);
-            lv_obj_move_foreground(mbox_connect);
+            lv_label_set_text_fmt(wifi_popup_title_label, "%s", ap_records[i].ssid);
+            lv_obj_move_foreground(wifi_popup_connect);
             current_ap_record_index = i;
             break;
         }
     }
 }
 
-static void showing_found_wifi_list() {
+static void ipv4_scan_list_event_handler(lv_obj_t * obj, lv_event_t event) {
+
+    return;
+
+//  for (int i = 0; i < MAX_SCAN_RESULTS; i++) {
+//      if (wifi_btn_list[i] == obj) { //what could go wrong
+//          lv_label_set_text_fmt(mbox_title_label, "%s", ap_records[i].ssid);
+//          lv_obj_move_foreground(mbox_connect);
+//          current_ap_record_index = i;
+//          break;
+//      }
+//  }
+}
+
+static void show_found_wifi_list() {
     if (found_wifi_count <= 0) {
         if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
             lv_list_clean(wifi_list);
@@ -267,15 +260,44 @@ static void showing_found_wifi_list() {
 
     if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
         lv_list_clean(wifi_list);
-        //lv_list_add_text(wifi_list, found_wifi_count > 1 ? "WiFi: Found Networks" : "WiFi: Not Found!");
-
         for (int i = 0; i < found_wifi_count; i++) {
             printf("Displaying wifi %i with ssid: %s\n", i, (char*)ap_records[i].ssid);
             lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, (char*)ap_records[i].ssid);
             wifi_btn_list[i] = btn;
-
             //printf(line_buf, "%s %-32.32s %4d %2d %s\n", LV_SYMBOL_WIFI, ap_records[i].ssid, ap_records[i].rssi, ap_records[i].primary, enc_buf);
-            lv_obj_set_event_cb(btn, list_event_handler);
+            lv_obj_set_event_cb(btn, wifi_list_event_handler);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        xSemaphoreGive(xGuiSemaphore);
+    }
+}
+
+static void show_found_ip_list() {
+    if (current_ipv4_list == NULL) {
+        return;
+    }
+
+    if (current_ipv4_list->size <= 0) {
+        if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
+            lv_list_clean(ipv4_scan_list);
+            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WARNING, "No online IP's found!");
+            ipv4_scan_btn_list[0] = btn;
+            xSemaphoreGive(xGuiSemaphore);
+        }
+        return;
+    }
+
+    if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
+        lv_list_clean(ipv4_scan_list);
+        char ip_string_buf[IP4ADDR_STRLEN_MAX];
+        for (int i = 0; i < current_ipv4_list->size; i++) {
+            ipv4_info * current_ipv4_info = get_from_ipv4_list_at(current_ipv4_list, i);
+            esp_ip4addr_ntoa((esp_ip4_addr_t*)&current_ipv4_info->ip, ip_string_buf, IP4ADDR_STRLEN_MAX);
+            printf("Displaying ipv4 device %i with IP: %s\n", i, ip_string_buf);
+            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
+            ipv4_scan_btn_list[i] = btn;
+
+            lv_obj_set_event_cb(btn, ipv4_scan_list_event_handler);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         xSemaphoreGive(xGuiSemaphore);
@@ -288,12 +310,16 @@ void wifi_scan_event_handler(lv_obj_t * obj, lv_event_t event) {
 
 void wifi_task(void *arg) {
     while(1) {
-        if (network_status == NETWORK_CONNECTING) {
-            if (wifi_connect((char*)lv_textarea_get_text(mbox_password_textarea)) == WIFI_CONNECTED_BIT) {
+        if (network_status == NETWORK_SCANNING) {
+            current_ipv4_list = arp_scan_full();
+            show_found_ip_list();
+            network_status = NETWORK_CONNECTED;
+        } else if (network_status == NETWORK_CONNECTING) {
+            if (wifi_connect((char*)lv_textarea_get_text(wifi_popup_password_textarea)) == WIFI_CONNECTED_BIT) {
                 // Successful connection to AP
                 network_status = NETWORK_CONNECTED;
                 if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                    lv_obj_move_background(mbox_connect);
+                    lv_obj_move_background(wifi_popup_connect);
                     xSemaphoreGive(xGuiSemaphore);
                 }
             } else {
@@ -305,13 +331,11 @@ void wifi_task(void *arg) {
                 }
             }
         } else {
-            if (network_status != NETWORK_CONNECTED) {
-                network_status = NETWORK_SEARCHING;
-                wifi_scan();
-                //if (lv_tabview_get_tab_act(tabview) == 0 && xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                // this function takes the semaphore itself
-                showing_found_wifi_list();
-            }
+            network_status = NETWORK_SEARCHING;
+            wifi_scan();
+            //if (lv_tabview_get_tab_act(tabview) == 0 && xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+            // this function takes the semaphore itself
+            show_found_wifi_list();
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -327,7 +351,8 @@ void mbox_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
 }
 
 void device_arp_scan_btn_cb(lv_obj_t * obj, lv_event_t event) {
-    arp_scan_full();
+    prev_network_status = network_status;
+    network_status = NETWORK_SCANNING;
 }
 
 void gui_task(void *pvParameter) {
@@ -377,14 +402,14 @@ void gui_task(void *pvParameter) {
     //lv_obj_set_event_cb(, wifi_scan_event_handler);
 
     build_pwmsg_box();
-    lv_obj_move_background(mbox_connect);
+    lv_obj_move_background(wifi_popup_connect);
 
 
     //lv_label_set_text(wifi_connected_status_label, "Not connected to Wi-Fi...");
-    lv_obj_set_event_cb(mbox_connect_btn, mbox_connect_wifi_event_cb);
+    lv_obj_set_event_cb(wifi_popup_connect_btn, mbox_connect_wifi_event_cb);
 
     //lv_label_set_text(wifi_connected_status_label, "Not connected to Wi-Fi...");
-    lv_obj_set_event_cb(device_scan_btn, device_arp_scan_btn_cb);
+    lv_obj_set_event_cb(ipv4_scan_btn, device_arp_scan_btn_cb);
 
     //buildSettings();
 

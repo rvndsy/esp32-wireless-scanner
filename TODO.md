@@ -4,7 +4,7 @@
 - ~Connect to wifi from scan list~
     - ~Touch keyboard with LVGL~
 - Find a way to scan the network?
-    - Device list with ARP pings
+    - ~Device list with ARP pings~
     - Top 1000 port scan with ????
 - Record cool data in SD
     - Wifi Scan list (Maybe bluetooth too?)

@@ -29,20 +29,21 @@ extern lv_obj_t * wifi_list;
 extern lv_obj_t * wifi_scan_list_label;
 extern lv_obj_t * wifi_connected_status_label;
 
-extern lv_obj_t * device_scan_tab;
-extern lv_obj_t * device_scan_btn;
+extern lv_obj_t * ipv4_scan_tab;
+extern lv_obj_t * ipv4_scan_btn;
+extern lv_obj_t * ipv4_scan_list;
 
 
 extern lv_obj_t * tab2;
 extern lv_obj_t * tab3;
 extern lv_obj_t * tab4;
 
-extern lv_obj_t * mbox_connect;
-extern lv_obj_t * mbox_password_textarea;
-extern lv_obj_t * mbox_title_label;
-extern lv_obj_t * mbox_connect_btn;
-extern lv_obj_t * mbox_btn_label;
-extern lv_obj_t * mbox_close_btn;
+extern lv_obj_t * wifi_popup_connect;
+extern lv_obj_t * wifi_popup_password_textarea;
+extern lv_obj_t * wifi_popup_title_label;
+extern lv_obj_t * wifi_popup_connect_btn;
+extern lv_obj_t * wifi_popup_btn_label;
+extern lv_obj_t * wifi_popup_close_btn;
 
 
 void set_style(void);
