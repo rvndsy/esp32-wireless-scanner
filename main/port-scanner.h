@@ -5,4 +5,4 @@
 
 void scan_ports(esp_ip4_addr_t target_ip);
 
-#endif
+#endif // PORT_SCANNER_H

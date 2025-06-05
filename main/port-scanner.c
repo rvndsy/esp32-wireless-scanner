@@ -1,47 +1,156 @@
 #include "port-scanner.h"
 #include "conf.h"
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include "esp_netif_ip_addr.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_log.h"
-#include "lwip/sockets.h"
+#include "esp_netif_ip_addr.h"
+#include "esp_timer.h"
+#include "freertos/projdefs.h"
+#include "lwip/ip_addr.h"
+#include "lwip/tcp.h"
+#include "lwip/tcpbase.h"
+#include "sys_arch.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define TAG "Port scanner"
 
+typedef struct tcp_conn_ctx {
+    struct tcp_pcb * pcb;
+    esp_timer_handle_t timeout_timer;
+    bool lock;
+    uint16_t port;
+} tcp_conn_ctx;
+
+tcp_conn_ctx * ctx_list[MAX_ONGOING_CONNECTIONS];
+
+uint8_t open_ports[OPEN_PORT_MAP_SIZE];
+
+err_t connection_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
+    printf("Connection status changed...\n");
+    tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
+    if (err == ERR_OK) {
+        printf("Connection OK. %u\n", tpcb->remote_port);
+        open_ports[ctx->port / 8] |= (0x1 << (ctx->port % 8));
+    } else {
+        printf("Connection FAIL: %d\n", err);
+    }
+
+    if (ctx == NULL) {
+        return ERR_ARG;
+    }
+
+    if (ctx->timeout_timer != NULL) {
+        esp_timer_stop(ctx->timeout_timer);
+        esp_timer_delete(ctx->timeout_timer);
+        ctx->timeout_timer = NULL;
+    }
+
+    if (ctx->pcb != NULL && ctx->pcb->state != CLOSED) {
+        tcp_close(ctx->pcb);
+        ctx->pcb = NULL;
+    }
+    ctx->lock = false;
+
+    return err;
+}
+
+void connection_timeout_cb(void *arg) {
+    tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
+
+    printf("Timeout on port %i\n", ctx->port);
+    if (ctx == NULL) {
+        return;
+    }
+    if (ctx->pcb != NULL && ctx->pcb->state != CLOSED) {
+        //tcp_close(ctx->pcb);
+        ctx->pcb = NULL;
+    }
+    ctx->lock = false;
+}
 
 void scan_ports(esp_ip4_addr_t target_ip) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        ESP_LOGE(TAG, "Could not create socket");
+    memset(open_ports, 0x0, OPEN_PORT_MAP_SIZE);
+
+    for (int i = 0; i < MAX_ONGOING_CONNECTIONS; i++) {
+        ctx_list[i] = calloc(1, sizeof(tcp_conn_ctx));
+        if (ctx_list[i] == NULL) {
+            ESP_LOGE(TAG, "scan_ports(): Failed to calloc tcp_conn_ctx %i of %i", i, MAX_ONGOING_CONNECTIONS);
+            return;
+        }
+        ctx_list[i]->pcb = NULL;
+        ctx_list[i]->lock = false;
     }
 
-    struct sockaddr_in server;
+    // Target ip in ip_addr_t so lwip understands
+    ip_addr_t ip_addr;
+    ip_addr.u_addr.ip4.addr = target_ip.addr;
 
-    for (int port = 1; port <= 65532; port++) {
-        //ESP_LOGI(TAG, "Trying to connect to port %i", port);
-
-        server.sin_family = AF_INET;
-        server.sin_port = htons(port);
-        server.sin_addr.s_addr = target_ip.addr; // Use the esp_ip4_addr_t directly
-
-        // // Set socket to non-blocking
-        // fcntl(sock, F_SETFL, O_NONBLOCK);
-
-        // Attempt to connect
-        int err = connect(sock, (struct sockaddr *)&server, sizeof(server));
-        if (err < 0) {
-            if (errno != EINPROGRESS) {
-                //ESP_LOGI(TAG, "Port %d is closed", port);
+    // in case anyone defined MAX_PORT too large
+    uint16_t max_port = MAX_PORT;
+    if (MAX_PORT > UINT16_MAX-1) {
+        max_port = UINT16_MAX-1;
+    }
+    // scan every port patiently...
+    for (uint16_t port = MIN_PORT; port <= max_port; port++) {
+        int i = 0;
+        while (1) {
+            if (i == MAX_ONGOING_CONNECTIONS) {
+                i = 0;
+                continue;
             }
-        } else {
-            ESP_LOGI(TAG, "Port %d is open", port);
+            if (ctx_list[i]->lock == false || ctx_list[i]->pcb == NULL) {
+                ctx_list[i]->lock = true;
+                break;
+            }
+            i++;
+            vTaskDelay(pdMS_TO_TICKS(25));
         }
 
-        close(sock);
-        vTaskDelay(10 / portTICK_PERIOD_MS); // Delay to avoid overwhelming the network
+        ctx_list[i]->pcb = tcp_new();
+        if (ctx_list[i] == NULL) {
+            ESP_LOGE(TAG, "scan_ports(): Error creating pcb #%i with tcp_new()", i);
+            return;
+        }
+        ctx_list[i]->pcb->state = CLOSED;
+        ctx_list[i]->port = port;
+
+        //ESP_LOGI(TAG, "scan_ports(): Connecting to port %i", port);
+        tcp_arg(ctx_list[i]->pcb, ctx_list[i]);
+        tcp_connect(ctx_list[i]->pcb, &ip_addr, port, connection_cb);
+
+        ctx_list[i]->lock = true;
+        esp_timer_create_args_t timer_args = {
+            .callback = connection_timeout_cb,
+            .arg = ctx_list[i],
+            .name = "tcp_connect_timeout"
+        };
+        esp_timer_create(&timer_args, &ctx_list[i]->timeout_timer);
+        esp_timer_start_once(ctx_list[i]->timeout_timer, TCP_CONN_TIMEOUT_MS * 1000);
     }
+
+    int freed_ctx_count = 0;
+    int i = 0;
+    while (freed_ctx_count < MAX_ONGOING_CONNECTIONS) {
+        if (i == MAX_ONGOING_CONNECTIONS) {
+            i = 0;
+            continue;
+        }
+        if (ctx_list[i] != NULL && ctx_list[i]->lock == false) {
+            if (ctx_list[i]->timeout_timer != NULL) {
+                esp_timer_delete(ctx_list[i]->timeout_timer);
+                ctx_list[i]->timeout_timer = NULL;
+            }
+            free(ctx_list[i]);
+            freed_ctx_count++;
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Avoid watchdog being triggered
+        i++;
+    }
+
+    return;
 }
+
+
+

@@ -15,6 +15,7 @@
 #include "lv_widgets/lv_tabview.h"
 #include "lv_widgets/lv_textarea.h"
 #include "lv_widgets/lv_list.h"
+#include "lwip/timeouts.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "freertos/portmacro.h"
@@ -85,6 +86,18 @@ char strftime_buf[64];
 struct tm timeinfo;
 /***********/
 
+/* VFS / lwip */
+#include "vfs_lwip.h"
+#include "lwip/init.h"
+
+void init_vfs() {
+    esp_vfs_lwip_sockets_register(); //self-error checks?
+    return;
+}
+
+#define LWIP_TICK_PERIOD_MS 10
+/**************/
+
 
 
 typedef enum {
@@ -129,7 +142,7 @@ esp_err_t wifi_init(void) {
     return ret;
 }
 
-int wifi_connect(char* wifi_password) {
+int wifi_connect(const char* wifi_password) {
     int status = WIFI_FAIL_BIT;
 
     wifi_config_t wifi_cfg = {
@@ -218,9 +231,14 @@ esp_err_t wifi_scan(void) {
     return ret;
 }
 
-static void tickInc(void *arg) {
+static void lv_timer(void *arg) {
     (void)arg;
     lv_tick_inc(LV_TICK_PERIOD_MS);
+}
+
+static void lwip_timer(void *arg) {
+    (void)arg;
+    sys_check_timeouts(); // lwip timer
 }
 
 static void wifi_list_event_handler(lv_obj_t * obj, lv_event_t event) {
@@ -279,7 +297,7 @@ static void show_found_ip_list() {
     }
 
     if (current_ipv4_list->size <= 0) {
-        if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
+        if ( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
             lv_list_clean(ipv4_scan_list);
             lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WARNING, "No online IP's found!");
             ipv4_scan_btn_list[0] = btn;
@@ -288,18 +306,27 @@ static void show_found_ip_list() {
         return;
     }
 
-    if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
+
+    // REMOVE LATER
+    //printf("Displaying ipv4 device with IP: 192.168.1.254\n");
+    ////
+    //uint32_t test = esp_ip4addr_aton("192.168.1.254");
+    //struct esp_ip4_addr test_ip; 
+    //test_ip.addr = test;
+    //scan_ports(test_ip); // Why on Earth is this needed?!
+
+    if (xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
         lv_list_clean(ipv4_scan_list);
         char ip_string_buf[IP4ADDR_STRLEN_MAX];
         for (int i = 0; i < current_ipv4_list->size; i++) {
             ipv4_info * current_ipv4_info = get_from_ipv4_list_at(current_ipv4_list, i);
             esp_ip4addr_ntoa((esp_ip4_addr_t*)&current_ipv4_info->ip, ip_string_buf, IP4ADDR_STRLEN_MAX);
             printf("Displaying ipv4 device %i with IP: %s\n", i, ip_string_buf);
-            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
-            ipv4_scan_btn_list[i] = btn;
 
             scan_ports(*(esp_ip4_addr_t*)&current_ipv4_info->ip); // Why on Earth is this needed?!
 
+            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
+            ipv4_scan_btn_list[i] = btn;
             lv_obj_set_event_cb(btn, ipv4_scan_list_event_handler);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -335,9 +362,17 @@ void wifi_task(void *arg) {
                     xSemaphoreGive(xGuiSemaphore);
                 }
             }
-        } else {
+        } else if (network_status != NETWORK_CONNECTED) {
             network_status = NETWORK_SEARCHING;
             wifi_scan();
+
+
+
+            current_ap_record_index = 0;
+            wifi_connect(""); // REMOVE LATER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
             //if (lv_tabview_get_tab_act(tabview) == 0 && xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
             // this function takes the semaphore itself
             show_found_wifi_list();
@@ -356,6 +391,10 @@ void mbox_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
 }
 
 void device_arp_scan_btn_cb(lv_obj_t * obj, lv_event_t event) {
+    if (network_status != NETWORK_CONNECTED) {
+        ESP_LOGI(TAG, "device_arp_scan_btn_cb(): Can't begin scan. Not connected to network!");
+        return;
+    }
     prev_network_status = network_status;
     network_status = NETWORK_SCANNING;
 }
@@ -369,13 +408,13 @@ void gui_task(void *pvParameter) {
     // Initialize SPI and display, touch drivers among other LVGL things
     lvgl_driver_init();
 
-    const esp_timer_create_args_t periodic_timer_args = {
-        .callback = &tickInc,
-        .name = "lvgl_tick_inc",
+    const esp_timer_create_args_t lv_periodic_timer_args = {
+        .callback = &lv_timer,
+        .name = "lv_timer",
     };
-    esp_timer_handle_t periodic_timer;
-    ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, LV_TICK_PERIOD_MS * 1000));
+    esp_timer_handle_t lv_periodic_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&lv_periodic_timer_args, &lv_periodic_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(lv_periodic_timer, pdMS_TO_TICKS(LV_TICK_PERIOD_MS)));
 
     // Setting up display
     static lv_disp_buf_t draw_buf;
@@ -449,6 +488,10 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // Initialize VFS for lwip and lwip itself
+    //init_vfs();
+    //lwip_init();
+
     // Initialize network interface, TCP/IP stack
     ESP_ERROR_CHECK(esp_netif_init());
 
@@ -460,6 +503,15 @@ void app_main(void) {
 
     // Pin gui drawing task to CPU core 1
     xTaskCreatePinnedToCore(gui_task, "gui_task", 4096 * 4, NULL, 0, NULL, 1);
+
+
+    const esp_timer_create_args_t lwip_periodic_timer_args = {
+        .callback = &lwip_timer,
+        .name = "lwip_timer",
+    };
+    esp_timer_handle_t lwip_periodic_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&lwip_periodic_timer_args, &lwip_periodic_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(lwip_periodic_timer, pdMS_TO_TICKS(LWIP_TICK_PERIOD_MS)));
 
     // Create a task for for Wi-Fi networks
     create_wifi_task();

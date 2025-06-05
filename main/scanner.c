@@ -80,7 +80,7 @@ ipv4_list * arp_scan_full(void) {
     ipv4_list * ipv4_list = create_ipv4_list(first_ip.addr, subnet_mask);
     if(ipv4_list == NULL){
         ESP_LOGE(TAG, "arp_scan_full(): Failed to allocate ipv4_list with create_ipv4_list()");
-        return;
+        return NULL;
     }
 
     // scan the entire subnet in batches
