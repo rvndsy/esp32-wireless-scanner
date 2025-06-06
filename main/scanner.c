@@ -36,6 +36,10 @@ uint32_t max_subnet_ip_count = 0; // store the maxium device that subnet can hol
 
 ipv4_list * online_ipv4_list; // store last ip, MAC, and online information to device
 
+ipv4_info * arp_individual_scan(void) {
+    
+}
+
 ipv4_list * arp_scan_full(void) {
     ESP_LOGI(TAG, "Starting ARP scan");
 

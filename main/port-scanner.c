@@ -26,14 +26,15 @@ tcp_conn_ctx * ctx_list[MAX_ONGOING_CONNECTIONS];
 
 uint8_t open_ports[OPEN_PORT_MAP_SIZE];
 
-err_t connection_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
-    printf("Connection status changed...\n");
+err_t tcp_connection_finished_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
+    //printf("Connection status changed...\n");
     tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
     if (err == ERR_OK) {
-        printf("Connection OK. %u\n", tpcb->remote_port);
+        printf("OK: %u\n", tpcb->remote_port);
         open_ports[ctx->port / 8] |= (0x1 << (ctx->port % 8));
     } else {
-        printf("Connection FAIL: %d\n", err);
+        // This doesnt happen for some reason... thus the need for a timeout
+        printf("FAIL: %u\n", tpcb->remote_port);
     }
 
     if (ctx == NULL) {
@@ -46,11 +47,12 @@ err_t connection_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
         ctx->timeout_timer = NULL;
     }
 
-    if (ctx->pcb != NULL && ctx->pcb->state != CLOSED) {
-        tcp_close(ctx->pcb);
-        ctx->pcb = NULL;
+    if (ctx->lock == true) {
+        ctx->lock = false;
+        if (ctx->pcb->state != CLOSED) {
+            tcp_close(ctx->pcb);
+        }
     }
-    ctx->lock = false;
 
     return err;
 }
@@ -58,15 +60,12 @@ err_t connection_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
 void connection_timeout_cb(void *arg) {
     tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
 
-    printf("Timeout on port %i\n", ctx->port);
+    //printf("Timeout on port %i\n", ctx->port);
     if (ctx == NULL) {
         return;
     }
-    if (ctx->pcb != NULL && ctx->pcb->state != CLOSED) {
-        //tcp_close(ctx->pcb);
-        ctx->pcb = NULL;
-    }
     ctx->lock = false;
+    //printf(".\n");
 }
 
 void scan_ports(esp_ip4_addr_t target_ip) {
@@ -99,25 +98,25 @@ void scan_ports(esp_ip4_addr_t target_ip) {
                 i = 0;
                 continue;
             }
-            if (ctx_list[i]->lock == false || ctx_list[i]->pcb == NULL) {
-                ctx_list[i]->lock = true;
+            if (ctx_list[i]->lock == false) {
+                if (ctx_list[i]->pcb != NULL && (ctx_list[i]->pcb->state != CLOSED || ctx_list[i]->pcb->state != ESTABLISHED)) {
+
+                }
+                ctx_list[i]->pcb = tcp_new();
+                if (ctx_list[i] == NULL) {
+                    ESP_LOGE(TAG, "scan_ports(): Error creating pcb #%i with tcp_new()", i);
+                    return;
+                }
                 break;
             }
             i++;
             vTaskDelay(pdMS_TO_TICKS(25));
         }
-
-        ctx_list[i]->pcb = tcp_new();
-        if (ctx_list[i] == NULL) {
-            ESP_LOGE(TAG, "scan_ports(): Error creating pcb #%i with tcp_new()", i);
-            return;
-        }
-        ctx_list[i]->pcb->state = CLOSED;
         ctx_list[i]->port = port;
 
         //ESP_LOGI(TAG, "scan_ports(): Connecting to port %i", port);
         tcp_arg(ctx_list[i]->pcb, ctx_list[i]);
-        tcp_connect(ctx_list[i]->pcb, &ip_addr, port, connection_cb);
+        tcp_connect(ctx_list[i]->pcb, &ip_addr, port, tcp_connection_finished_cb);
 
         ctx_list[i]->lock = true;
         esp_timer_create_args_t timer_args = {
@@ -141,13 +140,19 @@ void scan_ports(esp_ip4_addr_t target_ip) {
                 esp_timer_delete(ctx_list[i]->timeout_timer);
                 ctx_list[i]->timeout_timer = NULL;
             }
-            free(ctx_list[i]);
+            if (ctx_list[i] != NULL) {
+                //memset(ctx_list[i]->pcb, 0x0, sizeof(struct tcp_pcb));
+                //memset(ctx_list[i], 0x0, sizeof(tcp_conn_ctx));
+                free(ctx_list[i]);
+                ctx_list[i] = NULL;
+            }
             freed_ctx_count++;
             continue;
         }
         vTaskDelay(pdMS_TO_TICKS(10)); // Avoid watchdog being triggered
         i++;
     }
+    ESP_LOGI(TAG, "Port scan done for %s", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
 
     return;
 }

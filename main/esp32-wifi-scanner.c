@@ -95,7 +95,7 @@ void init_vfs() {
     return;
 }
 
-#define LWIP_TICK_PERIOD_MS 10
+#define LWIP_TICK_PERIOD_MS 250
 /**************/
 
 
@@ -236,9 +236,11 @@ static void lv_timer(void *arg) {
     lv_tick_inc(LV_TICK_PERIOD_MS);
 }
 
-static void lwip_timer(void *arg) {
-    (void)arg;
-    sys_check_timeouts(); // lwip timer
+static void lwip_timer_handle(void *pv) {
+    while (1) {
+        sys_check_timeouts(); // lwip timer
+        vTaskDelay(pdMS_TO_TICKS(LWIP_TICK_PERIOD_MS));
+    }
 }
 
 static void wifi_list_event_handler(lv_obj_t * obj, lv_event_t event) {
@@ -306,17 +308,8 @@ static void show_found_ip_list() {
         return;
     }
 
-
-    // REMOVE LATER
-    //printf("Displaying ipv4 device with IP: 192.168.1.254\n");
-    ////
-    //uint32_t test = esp_ip4addr_aton("192.168.1.254");
-    //struct esp_ip4_addr test_ip; 
-    //test_ip.addr = test;
-    //scan_ports(test_ip); // Why on Earth is this needed?!
-
-    if (xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-        lv_list_clean(ipv4_scan_list);
+    //if (xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+        //lv_list_clean(ipv4_scan_list);
         char ip_string_buf[IP4ADDR_STRLEN_MAX];
         for (int i = 0; i < current_ipv4_list->size; i++) {
             ipv4_info * current_ipv4_info = get_from_ipv4_list_at(current_ipv4_list, i);
@@ -325,13 +318,13 @@ static void show_found_ip_list() {
 
             scan_ports(*(esp_ip4_addr_t*)&current_ipv4_info->ip); // Why on Earth is this needed?!
 
-            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
-            ipv4_scan_btn_list[i] = btn;
-            lv_obj_set_event_cb(btn, ipv4_scan_list_event_handler);
+            //lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
+            //ipv4_scan_btn_list[i] = btn;
+            //lv_obj_set_event_cb(btn, ipv4_scan_list_event_handler);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-        xSemaphoreGive(xGuiSemaphore);
-    }
+    //    xSemaphoreGive(xGuiSemaphore);
+    //}
 
     return;
 }
@@ -383,7 +376,7 @@ void wifi_task(void *arg) {
 
 void create_wifi_task() {
     network_status = NETWORK_SEARCHING;
-    xTaskCreatePinnedToCore(wifi_task, "wifi_scan_task", 4096, NULL, 5, &wifi_task_handle, 0);
+    xTaskCreatePinnedToCore(wifi_task, "wifi_scan_task", 4096 * 4, NULL, 5, &wifi_task_handle, 0);
 }
 
 void mbox_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
@@ -501,17 +494,11 @@ void app_main(void) {
     // Initialize Wi-FI
     ESP_ERROR_CHECK(wifi_init());
 
-    // Pin gui drawing task to CPU core 1
+    // Lwip sys_check_timeouts doesn't belong in a esp timer... pinned to Core 0
+    xTaskCreatePinnedToCore(lwip_timer_handle, "lwip_timer", 2048, NULL, 5, NULL, 0);
+
+    // Pin gui drawing task to CPU Core 1. Core 1 just for GUI.
     xTaskCreatePinnedToCore(gui_task, "gui_task", 4096 * 4, NULL, 0, NULL, 1);
-
-
-    const esp_timer_create_args_t lwip_periodic_timer_args = {
-        .callback = &lwip_timer,
-        .name = "lwip_timer",
-    };
-    esp_timer_handle_t lwip_periodic_timer;
-    ESP_ERROR_CHECK(esp_timer_create(&lwip_periodic_timer_args, &lwip_periodic_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(lwip_periodic_timer, pdMS_TO_TICKS(LWIP_TICK_PERIOD_MS)));
 
     // Create a task for for Wi-Fi networks
     create_wifi_task();
