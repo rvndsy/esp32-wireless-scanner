@@ -1,5 +1,6 @@
 #include "port-scanner.h"
 #include "conf.h"
+#include "scanner.h"
 
 #include "esp_log.h"
 #include "esp_netif_ip_addr.h"
@@ -13,25 +14,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TAG "Port scanner"
+#define TAG "Port_scanner"
 
 typedef struct tcp_conn_ctx {
     struct tcp_pcb * pcb;
     esp_timer_handle_t timeout_timer;
     bool lock;
     uint16_t port;
+    uint8_t * port_map;
 } tcp_conn_ctx;
 
 tcp_conn_ctx * ctx_list[MAX_ONGOING_CONNECTIONS];
-
-uint8_t open_ports[OPEN_PORT_MAP_SIZE];
+uint8_t * local_port_map;
 
 err_t tcp_connection_finished_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
     //printf("Connection status changed...\n");
     tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
     if (err == ERR_OK) {
         printf("OK: %u\n", tpcb->remote_port);
-        open_ports[ctx->port / 8] |= (0x1 << (ctx->port % 8));
+        local_port_map[ctx->port / 8] |= (0x1 << (ctx->port % 8));
     } else {
         // This doesnt happen for some reason... thus the need for a timeout
         printf("FAIL: %u\n", tpcb->remote_port);
@@ -49,9 +50,9 @@ err_t tcp_connection_finished_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
 
     if (ctx->lock == true) {
         ctx->lock = false;
-        if (ctx->pcb->state != CLOSED) {
-            tcp_close(ctx->pcb);
-        }
+        //if (ctx->pcb->state != CLOSED) {
+        //    tcp_close(ctx->pcb);
+        //}
     }
 
     return err;
@@ -68,14 +69,25 @@ void connection_timeout_cb(void *arg) {
     //printf(".\n");
 }
 
-void scan_ports(esp_ip4_addr_t target_ip) {
-    memset(open_ports, 0x0, OPEN_PORT_MAP_SIZE);
+uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
+    memset(port_map, 0x0, OPEN_PORT_MAP_SIZE);
+    local_port_map = port_map;
+    ESP_LOGI(TAG, "Initializing port scan for %s\n", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
+
+    //ESP_LOGI(TAG, "scan_ports(): Checking if host is up...");
+    //ipv4_info * check_if_up = arp_scan_single(target_ip);
+    //if (check_if_up == NULL) {
+    //    ESP_LOGI(TAG, "scan_ports(): Host down, skipping port scan");
+    //    return NULL;
+    //}
+    //free(check_if_up);
+    //ESP_LOGI(TAG, "scan_ports(): Host up, initializing scan");
 
     for (int i = 0; i < MAX_ONGOING_CONNECTIONS; i++) {
         ctx_list[i] = calloc(1, sizeof(tcp_conn_ctx));
         if (ctx_list[i] == NULL) {
             ESP_LOGE(TAG, "scan_ports(): Failed to calloc tcp_conn_ctx %i of %i", i, MAX_ONGOING_CONNECTIONS);
-            return;
+            return NULL;
         }
         ctx_list[i]->pcb = NULL;
         ctx_list[i]->lock = false;
@@ -105,7 +117,7 @@ void scan_ports(esp_ip4_addr_t target_ip) {
                 ctx_list[i]->pcb = tcp_new();
                 if (ctx_list[i] == NULL) {
                     ESP_LOGE(TAG, "scan_ports(): Error creating pcb #%i with tcp_new()", i);
-                    return;
+                    return NULL;
                 }
                 break;
             }
@@ -152,9 +164,9 @@ void scan_ports(esp_ip4_addr_t target_ip) {
         vTaskDelay(pdMS_TO_TICKS(10)); // Avoid watchdog being triggered
         i++;
     }
-    ESP_LOGI(TAG, "Port scan done for %s", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
+    ESP_LOGI(TAG, "Port scan done for %s\n", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
 
-    return;
+    return local_port_map;
 }
 
 

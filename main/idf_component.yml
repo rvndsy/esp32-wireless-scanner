@@ -9,5 +9,8 @@ dependencies:
   #  version: "9fed1cc47b5a45fec6bae08b55d2147d3b50260c"
   lvgl/lvgl_esp32_drivers:
     path: ../components/lvgl__lvgl_esp32_drivers
+  #v1.16.4 for idf v4.4.8
+  esp_littlefs:
+    path: ../components/esp_littlefs
   idf:
     version: "=4.4.8"

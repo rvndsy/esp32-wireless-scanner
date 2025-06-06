@@ -57,6 +57,14 @@ lv_obj_t * popup_title_label;
 lv_obj_t * popup_box_close_btn;
 lv_obj_t * popup_box_close_btn_label;
 
+
+/* Top status bar */
+lv_obj_t * time_label;
+lv_obj_t * wifi_label;
+lv_obj_t * status_label;
+
+
+
 void set_style(void) {
     lv_style_init(&desc_text_style);
     lv_style_set_bg_color(&desc_text_style, LV_STATE_DEFAULT, LV_COLOR_WHITE);
@@ -81,6 +89,7 @@ void build_gui(void) {
 
     tabview = lv_tabview_create(lv_scr_act(), NULL);
     wifi_scan_tab = lv_tabview_add_tab(tabview, "Wifi");
+    lv_obj_align(wifi_scan_tab, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 0, 30);
 
     // TODO: Remove and move to a simple message in statusbar
     wifi_connected_status_label = lv_label_create(wifi_scan_tab, NULL);
@@ -94,7 +103,8 @@ void build_gui(void) {
 
     ipv4_scan_tab = lv_tabview_add_tab(tabview, "Scan");
     ipv4_scan_btn = lv_btn_create(ipv4_scan_tab, NULL);
-    lv_obj_align(ipv4_scan_btn, ipv4_scan_tab, LV_ALIGN_IN_TOP_LEFT, 10, 10);
+    lv_obj_align(ipv4_scan_btn, ipv4_scan_tab, LV_ALIGN_IN_TOP_LEFT, 0, 0);
+    lv_obj_set_size(ipv4_scan_btn, 40, 20);
     ipv4_scan_list = lv_list_create(ipv4_scan_tab, NULL);
     lv_obj_set_size(ipv4_scan_list, DISPLAY_W - 20, DISPLAY_H);
     lv_obj_align(ipv4_scan_list, ipv4_scan_tab, LV_ALIGN_IN_TOP_MID, 0, 40);
@@ -201,30 +211,19 @@ void show_popup_msg_box(char * title, char * msg) {
     lv_obj_move_foreground(popup_box);
 }
 
-// void build_statusbar(void) {
-// 
-// 
-//     status_bar = lv_obj_create(lv_scr_act(), NULL);
-//     lv_obj_set_size(status_bar, DISPLAY_W, 30);
-//     lv_obj_align(status_bar, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 0, 0);
-// 
-//     //lv_obj_remove_style(status_bar, NULL, LV_PART_SCROLLBAR | LV_STATE_ANY);
-// 
-//     time_label = lv_label_create(status_bar, NULL);
-//     lv_obj_set_size(time_label, DISPLAY_W - 50, 30);
-// 
-//     lv_label_set_text(time_label, "WiFi Not Connected!    " LV_SYMBOL_CLOSE);
-//     lv_obj_align(time_label, status_bar, LV_ALIGN_IN_LEFT_MID, 8, 4);
-// 
-//     settings_btn = lv_btn_create(status_bar, NULL);
-//     lv_obj_set_size(settings_btn, 30, 30);
-//     lv_obj_align(settings_btn, status_bar, LV_ALIGN_IN_RIGHT_MID, 0, 0);
-// 
-//     //lv_obj_set_event_cb(settings_btn, btn_event_cb);
-// 
-//     settings_btn_label = lv_label_create(settings_btn, NULL); /*Add a label to the button*/
-//     lv_label_set_text(settings_btn_label, LV_SYMBOL_SETTINGS);  /*Set the labels text*/
-//     lv_style_set_value_align(&btn_style, LV_STATE_DEFAULT, LV_ALIGN_CENTER);
-// }
+void build_statusbar(void) {
+
+
+    status_bar = lv_obj_create(lv_scr_act(), NULL);
+    lv_obj_set_size(status_bar, DISPLAY_W, 30);
+    lv_obj_align(status_bar, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 0, 0);
+
+    //lv_obj_remove_style(status_bar, NULL, LV_PART_SCROLLBAR | LV_STATE_ANY);
+
+    time_label = lv_label_create(status_bar, NULL);
+    lv_obj_set_size(time_label, DISPLAY_W - 50, 30);
+    lv_label_set_text(time_label, "WiFi Not Connected!    " LV_SYMBOL_CLOSE);
+    lv_obj_align(time_label, status_bar, LV_ALIGN_IN_LEFT_MID, 8, 4);
+}
 
 
