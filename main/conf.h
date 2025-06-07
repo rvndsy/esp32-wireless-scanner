@@ -27,6 +27,7 @@
 
 /* WiFi/AP */
 #define MAX_SCAN_RESULTS 20
+#define DEFAULT_WIFI_INPUT_PASSWORD ""
 /***********/
 
 /* SNTP/Time syncing */

@@ -21,6 +21,7 @@
 #include "lv_widgets/lv_textarea.h"
 #include "lv_widgets/lv_list.h"
 #include "lwip/def.h"
+#include "lwip/ip4_addr.h"
 #include "lwip/timeouts.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
@@ -41,8 +42,10 @@
 #define WIFI_FAIL_BIT BIT1
 
 static size_t found_ap_count = 0;
-static uint8_t current_ap_record_index = 0;
+wifi_ap_record_t current_ap_record;
 wifi_ap_record_t ap_records[MAX_SCAN_RESULTS];
+#define SIZEOF_AP_LABEL 64
+static char ap_label_list[MAX_SCAN_RESULTS][SIZEOF_AP_LABEL];
 
 char ap_password_str[64];
 static const int MAX_AP_RETRY_ATTEMPT = 10;
@@ -66,6 +69,8 @@ static httpd_handle_t server = NULL;
 char line_buf[64*2];
 
 #define LV_TICK_PERIOD_MS 1
+#define LV_TASK_HANDLER_MS 15
+#define STATUSBAR_PERIOD 1000
 
 #include "gui.h"
 #define IPV4_LIST_SIZE 254
@@ -83,6 +88,7 @@ static lv_obj_t * ipv4_scan_btn_list[IPV4_LIST_SIZE];
 // Wifi
 static EventGroupHandle_t wifi_event_group = NULL;
 static TaskHandle_t wifi_task_handle = NULL;
+static TaskHandle_t time_sync_task_handle = NULL;
 
 // LVGL
 static SemaphoreHandle_t xGuiSemaphore;
@@ -92,8 +98,8 @@ static SemaphoreHandle_t xGuiSemaphore;
 /*  Time   */
 #include "time.h"
 time_t now = 0;
-char time_str[64];
 struct tm timeinfo;
+char time_str[64];
 /***********/
 
 /* lwip */
@@ -131,7 +137,7 @@ typedef enum {
     PORT_SINGLE,
 } scan_type_t;
 scan_type_t scan_status = NO_SCAN;
-uint32_t port_scan_target_index = 0;
+uint32_t current_port_scan_target_index = 0;
 
 ipv4_list * last_ipv4_list = NULL;
 uint8_t last_ipv4_port_map[OPEN_PORT_MAP_SIZE];
@@ -157,7 +163,6 @@ void setup_sntp() {
     sntp_init();
 }
 
-// TODO: i think it should be in a separate task? takes several seconds to a minute
 void sync_time() {
     if (network_status != NETWORK_CONNECTED) {
         return;
@@ -170,16 +175,6 @@ void sync_time() {
         time(&now);
         localtime_r(&now, &timeinfo);
         vTaskDelay(pdMS_TO_TICKS(SNTP_SYNC_ATTEMPT_DELAY));
-
-        //sntp_sync_status_t stat = sntp_get_sync_status();
-        //if (stat == SNTP_SYNC_STATUS_RESET) {
-        //    printf("reset\n");
-        //} else if (stat == SNTP_SYNC_STATUS_COMPLETED) {
-        //    printf("completed\n");
-        //} else if (stat == SNTP_SYNC_STATUS_IN_PROGRESS) {
-        //    printf("in progress\n");
-        //}
-
         attempts++;
     }
 
@@ -194,8 +189,10 @@ void sync_time() {
 bool update_time_check_if_valid() {
     time(&now);
     if (now < 1749221337) {
+        timeinfo = *localtime(&now);
         return false;
     } else {
+        timeinfo = *localtime(&now);
         return true;
     }
 }
@@ -270,7 +267,15 @@ esp_ip4_addr_t get_ap_ip() {
     return ip_info.gw;
 }
 
-int wifi_connect(const char* wifi_password) {
+void time_sync_task(void * arg) {
+    (void)arg;
+    setup_dns();
+    setup_sntp();
+    sync_time();
+    vTaskDelete(NULL);
+}
+
+int wifi_connect(const char * wifi_password) {
     int status = WIFI_FAIL_BIT;
 
     wifi_config_t wifi_cfg = {
@@ -283,7 +288,7 @@ int wifi_connect(const char* wifi_password) {
             }
         },
     };
-    strncpy((char*)wifi_cfg.sta.ssid, (char*)ap_records[current_ap_record_index].ssid, sizeof(wifi_cfg.sta.ssid));
+    strncpy((char*)wifi_cfg.sta.ssid, (char*)current_ap_record.ssid, sizeof(wifi_cfg.sta.ssid));
     strncpy((char*)wifi_cfg.sta.password, wifi_password, sizeof(wifi_cfg.sta.password));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -314,9 +319,9 @@ int wifi_connect(const char* wifi_password) {
             status = WIFI_CONNECTED_BIT;
             network_status = NETWORK_CONNECTED;
 
-            setup_dns();
-            setup_sntp();
-            sync_time();
+            if (time_sync_task_handle == NULL) {
+                xTaskCreate(time_sync_task, "time_sync_task", 2048, NULL, 10, &time_sync_task_handle);
+            }
 
             return status;
         }
@@ -379,11 +384,16 @@ static void lwip_timer_handle(void *pv) {
 }
 
 static void wifi_list_btn_cb(lv_obj_t * obj, lv_event_t event) {
+    if (event != LV_EVENT_CLICKED) {
+        return;
+    }
     for (int i = 0; i < MAX_SCAN_RESULTS; i++) {
-        if (wifi_btn_list[i] == obj) { //what could go wrong
+        if (wifi_btn_list[i] == obj) {
+            // Set the popup label to the SSID of the clicked AP
+            current_ap_record = ap_records[i];
             lv_label_set_text_fmt(wifi_popup_title_label, "%s", ap_records[i].ssid);
-            lv_obj_move_foreground(wifi_popup_connect);
-            current_ap_record_index = i;
+            lv_obj_move_foreground(wifi_popup);
+
             break;
         }
     }
@@ -393,11 +403,14 @@ static void ipv4_scan_list_btn_cb(lv_obj_t * obj, lv_event_t event) {
     if (scan_status != NO_SCAN) {
         return;
     }
+    if (event != LV_EVENT_CLICKED) {
+        return;
+    }
     network_status = NETWORK_SCANNING;
     scan_status = PORT_SINGLE;
     for (int i = 0; i < IPV4_LIST_SIZE; i++) {
         if (ipv4_scan_btn_list[i] == obj) {
-            port_scan_target_index = i;
+            current_port_scan_target_index = i;
             break;
         }
     }
@@ -407,22 +420,31 @@ static void show_found_wifi_list() {
     if (found_ap_count <= 0) {
         if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
             lv_list_clean(wifi_list);
-            lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WARNING, "No networks found!");
+            lv_obj_t * btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WARNING, "No networks found!");
             wifi_btn_list[0] = btn;
             xSemaphoreGive(xGuiSemaphore);
         }
         return;
     }
 
-    if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
+    for (int i = 0; i < found_ap_count && i < 32; i++) {
+        const char *auth_str = (ap_records[i].authmode == WIFI_AUTH_OPEN) ? "open" : "locked";
+        snprintf(ap_label_list[i], SIZEOF_AP_LABEL, "%s    (RSSI: %d AUTH: %s)", (char *)ap_records[i].ssid, ap_records[i].rssi, auth_str);
+    }
+
+    if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
         lv_list_clean(wifi_list);
-        for (int i = 0; i < found_ap_count; i++) {
-            printf("Displaying wifi %i with ssid: %s\n", i, (char*)ap_records[i].ssid);
-            lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, (char*)ap_records[i].ssid);
+        for (int i = 0; i < found_ap_count && i < 32; i++) {
+            lv_obj_t *btn = lv_list_add_btn(wifi_list, NULL, ap_label_list[i]);
+
+            lv_obj_t *label = lv_obj_get_child(btn, NULL);
+            lv_obj_set_style_local_text_font(label, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &lv_font_montserrat_12);
+            lv_obj_set_height(btn, 12);
+
             wifi_btn_list[i] = btn;
             lv_obj_set_event_cb(btn, wifi_list_btn_cb);
-            vTaskDelay(pdMS_TO_TICKS(100));
         }
+
         xSemaphoreGive(xGuiSemaphore);
     }
 }
@@ -455,7 +477,7 @@ static void show_found_ip_list() {
         printf("Displaying ipv4 device %i with IP: %s\n", i, ip_string_buf);
 
         if (xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, LV_SYMBOL_WIFI, ip_string_buf);
+            lv_obj_t *btn = lv_list_add_btn(ipv4_scan_list, NULL, ip_string_buf);
             ipv4_scan_btn_list[i] = btn;
             lv_obj_set_event_cb(btn, ipv4_scan_list_btn_cb);
             xSemaphoreGive(xGuiSemaphore);
@@ -471,9 +493,9 @@ void wifi_scan_event_handler(lv_obj_t * obj, lv_event_t event) {
 
 void wifi_task(void *arg) {
     while(1) {
-        if (network_status == NETWORK_CONNECTED) {
+        if (network_status == SERVING) {
             // ...
-        } else if (network_status == SERVING) {
+        } else if (network_status == NETWORK_CONNECTED) {
             // ...
         } else if (network_status == START_SERVE) {
             wifi_start_ap();
@@ -485,7 +507,7 @@ void wifi_task(void *arg) {
             ESP_LOGI(TAG, "AP gateway ip is %s", ip_str);
 
             if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                lv_label_set_text(server_http_ip, ip_str);
+                lv_label_set_text_fmt(server_http_ip, "IP: %s", ip_str);
                 xSemaphoreGive(xGuiSemaphore);
             }
 
@@ -507,7 +529,7 @@ void wifi_task(void *arg) {
                 record_ipv4_list_data_to_file(now, last_ipv4_list);
             }
             if (scan_status == PORT_SINGLE) {
-                ipv4_info * last_ipv4_info = get_from_ipv4_list_at(last_ipv4_list, port_scan_target_index);
+                ipv4_info * last_ipv4_info = get_from_ipv4_list_at(last_ipv4_list, current_port_scan_target_index);
                 uint32_t ip = htonl(last_ipv4_info->ip);
                 ESP_LOGI(TAG, "Starting port scan for target %s", ip4addr_ntoa((ip4_addr_t*)&ip));
                 scan_ports(*(esp_ip4_addr_t*)&ip, last_ipv4_port_map);
@@ -528,7 +550,7 @@ void wifi_task(void *arg) {
                 // Successful connection to AP
                 network_status = NETWORK_CONNECTED;
                 if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                    lv_obj_move_background(wifi_popup_connect);
+                    lv_obj_move_background(wifi_popup);
                     xSemaphoreGive(xGuiSemaphore);
                 }
             } else {
@@ -538,6 +560,7 @@ void wifi_task(void *arg) {
                     show_popup_msg_box("Error", "WiFi connection failed!");
                     xSemaphoreGive(xGuiSemaphore);
                 }
+                network_status = NETWORK_SEARCHING;
             }
         } else {
             network_status = NETWORK_SEARCHING;
@@ -547,21 +570,19 @@ void wifi_task(void *arg) {
             update_time_check_if_valid();
             record_ap_records_data_to_file(now, ap_records, found_ap_count);
 
-            //current_ap_record_index = 0;
-            //wifi_connect(""); // REMOVE LATER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
             show_found_wifi_list();
+            vTaskDelay(pdMS_TO_TICKS(3000));
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void create_wifi_task() {
     network_status = NETWORK_SEARCHING;
-    xTaskCreatePinnedToCore(wifi_task, "wifi_scan_task", 4096 * 4, NULL, 4, &wifi_task_handle, 0);
+    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096 * 4, NULL, 4, &wifi_task_handle, 0);
 }
 
-void mbox_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
+void wifi_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
     network_status = NETWORK_CONNECTING;
 }
 
@@ -586,6 +607,81 @@ void serve_switch_cb(lv_obj_t * obj, lv_event_t event) {
             ESP_LOGI(TAG, "Switch is OFF");
             network_status = NETWORK_SEARCHING;
         }
+    }
+}
+
+const char * statusbar_dots_from_state(uint8_t * state) {
+    if (*state == 1) {
+        return "";
+    } else if (*state == 2) {
+        return ".";
+    } else if (*state == 3) {
+        return "..";
+    } else if (*state == 0) {
+        return "...";
+    }
+    return "";
+}
+
+void update_label(lv_obj_t *label, const char *str1, const char *str2, const char *str3) {
+    if (str1 == NULL) {
+        return;
+    }
+    static char prev_text[64];
+    static char next_text[64];
+
+    snprintf(next_text, sizeof(next_text), "%s%s%s", str1, str2 ? str2 : "", str3 ? str3 : "");
+
+    if (strcmp(next_text, prev_text) != 0) {
+        if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+            lv_label_set_text(label, next_text);
+            xSemaphoreGive(xGuiSemaphore);
+            strncpy(prev_text, next_text, sizeof(prev_text));
+        }
+    }
+}
+
+void statusbar_task(void *args) {
+    (void)args;
+    uint8_t state = 0;
+    while (1) {
+        if (network_status == NETWORK_CONNECTED) {
+            update_label(status_label, "N: ", (char*)current_ap_record.ssid, NULL);
+        } else if (network_status == NETWORK_CONNECTING) {
+            update_label(status_label, "N: CONNECTING", (char*)statusbar_dots_from_state(&state), NULL);
+        } else if (network_status == SERVING) {
+            update_label(status_label, "AP: SERVING", NULL, NULL);
+        } else if (network_status == START_SERVE) {
+            update_label(status_label, "AP: STARTING SRV", NULL, NULL);
+        } else if (network_status == STOP_SERVE) {
+            update_label(status_label, "AP: STOPPING SRV", NULL, NULL);
+        } else if (network_status == NETWORK_SEARCHING) {
+            update_label(status_label, "N: SEARCHING", (char*)statusbar_dots_from_state(&state), NULL);
+        } else if (network_status == NETWORK_SCANNING) {
+            if (scan_status == ARP_FULL) {
+                update_label(status_label, "SCAN: ARP FULL ", (char*)statusbar_dots_from_state(&state), NULL);
+            } else if (scan_status == PORT_SINGLE) {
+                uint32_t ip = htonl(get_from_ipv4_list_at(last_ipv4_list, current_port_scan_target_index)->ip);
+                update_label(status_label, "SCAN: PORT  ", ip4addr_ntoa((ip4_addr_t*)&ip), (char*)statusbar_dots_from_state(&state));
+            }
+        } else if (network_status == NONE) {
+            update_label(status_label, "DOWN/ERR", NULL, NULL);
+        }
+        update_time_check_if_valid();
+        if (network_status == SYNCING_TIME) {
+            if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+                update_label(time_label, "...", (char*)statusbar_dots_from_state(&state), NULL);
+                xSemaphoreGive(xGuiSemaphore);
+            }
+        } else {
+            if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+                lv_label_set_text_fmt(time_label, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+                xSemaphoreGive(xGuiSemaphore);
+            }
+        }
+        state++;
+        state = state % 4; //4 states...
+        vTaskDelay(pdMS_TO_TICKS(STATUSBAR_PERIOD));
     }
 }
 
@@ -626,39 +722,31 @@ void gui_task(void *pvParameter) {
     indev_drv.read_cb = touch_driver_read;     /*Set your driver function*/
     lv_indev_drv_register(&indev_drv);         /*Finally register the driver*/
 
-    set_style();
+    // Building LVGL gui objects
+    init_style();
     build_gui();
+    build_statusbar();
 
     make_keyboard();
 
-    // Not using this...
-    //build_statusbar();
-    //lv_obj_set_event_cb(, wifi_scan_event_handler);
+    build_wifi_connection_box();
+    lv_obj_move_background(wifi_popup);
 
-    build_pwmsg_box();
-    lv_obj_move_background(wifi_popup_connect);
-
-
-    // // Setting event handlers for GUI objects...
-    lv_obj_set_event_cb(wifi_popup_connect_btn, mbox_connect_wifi_event_cb);
+    // Setting event handlers for GUI objects...
+    lv_obj_set_event_cb(wifi_popup_connect_btn, wifi_connect_wifi_event_cb);
     lv_obj_set_event_cb(ipv4_scan_btn, arp_full_scan_btn_cb);
     lv_obj_set_event_cb(serve_switch, serve_switch_cb);
 
-    //tryPreviousNetwork();
-
-    //lv_example_flex_1();
-
+    xTaskCreate(statusbar_task, "statusbar_task", 2048, NULL, 0, NULL);
 
     // This part should run indefinitely all the time
     while (1) {
-      // Delay 10ms
-      vTaskDelay(pdMS_TO_TICKS(10));
-
-      // Try to take the semaphore and call lv_task_handler()
-      if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-        lv_task_handler();
-        xSemaphoreGive(xGuiSemaphore);
-      }
+        vTaskDelay(pdMS_TO_TICKS(LV_TASK_HANDLER_MS));
+        // Try to take the semaphore and call lv_task_handler()
+        if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+            lv_task_handler();
+            xSemaphoreGive(xGuiSemaphore);
+        }
     }
 
     // This should not happen
@@ -691,11 +779,11 @@ void app_main(void) {
     // Initialize Wi-FI
     ESP_ERROR_CHECK(wifi_init());
 
-    // Lwip sys_check_timeouts doesn't belong in a esp timer... pinned to Core 0
-    xTaskCreatePinnedToCore(lwip_timer_handle, "lwip_timer", 2048, NULL, 5, NULL, 0);
+    // Lwip sys_check_timeouts doesn't belong in a esp timer...
+    xTaskCreate(lwip_timer_handle, "lwip_timer", 2048, NULL, 5, NULL);
 
     // Pin gui drawing task to CPU Core 1. Core 1 just for GUI.
-    xTaskCreatePinnedToCore(gui_task, "gui_task", 4096 * 4, NULL, 0, NULL, 1);
+    xTaskCreatePinnedToCore(gui_task, "gui_task", 4096 * 4, NULL, 1, NULL, 1);
 
     // Create a task for for Wi-Fi networks
     create_wifi_task();
