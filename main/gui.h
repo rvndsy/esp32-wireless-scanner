@@ -33,10 +33,11 @@ extern lv_obj_t * ipv4_scan_tab;
 extern lv_obj_t * ipv4_scan_btn;
 extern lv_obj_t * ipv4_scan_list;
 
-
-extern lv_obj_t * tab2;
-extern lv_obj_t * tab3;
-extern lv_obj_t * tab4;
+extern lv_obj_t * server_tab;
+extern lv_obj_t * serve_switch;
+extern lv_obj_t * server_ap_ssid_label;
+extern lv_obj_t * server_ap_password;
+extern lv_obj_t * server_http_ip;
 
 extern lv_obj_t * wifi_popup_connect;
 extern lv_obj_t * wifi_popup_password_textarea;

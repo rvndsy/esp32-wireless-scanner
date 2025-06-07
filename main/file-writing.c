@@ -12,19 +12,11 @@
 
 #define TAG "File_writing"
 
-#define SIZEOF_PORT_ROOT 17
-const char port_root_dir[SIZEOF_PORT_ROOT] = "/littlefs/ports/";
-
-#define SIZEOF_IPV4_INFO_ROOT 21
-const char ipv4_info_root_dir[SIZEOF_IPV4_INFO_ROOT] = "/littlefs/ipv4_info/";
-
-#define SIZEOF_AP_RECORDS_ROOT 22
-const char ap_records_root_dir[SIZEOF_AP_RECORDS_ROOT] = "/littlefs/ap_records/";
-
+const char port_root_dir[] = "/littlefs/ports/";
+const char ipv4_info_root_dir[] = "/littlefs/ipv4_info/";
+const char ap_records_root_dir[] = "/littlefs/ap_records/";
+const char extension[] = ".txt";
 #define SIZEOF_TIME_STR 20
-
-#define SIZEOF_EXTENSION 5
-const char extension[SIZEOF_EXTENSION] = ".txt";
 
 void ensure_directory_exists(const char * path) {
     if (path == NULL) {
@@ -60,10 +52,31 @@ void iterate_bitmap_bits(const uint8_t * port_map, uint32_t max_port) {
     }
 }
 
+const char *auth_mode_to_string(wifi_auth_mode_t mode) {
+    switch (mode) {
+        case 0:   return "OPEN";
+        case 1:   return "WEP";
+        case 2:   return "WPA_PSK";
+        case 3:   return "WPA2_PSK";
+        case 4:   return "WPA_WPA2_PSK";
+        // case 5 and 6 are WIFI_AUTH_WPA2_ENTERPRISE == WIFI_AUTH_ENTERPRISE respectively
+        case 6:   return "WPA2_ENTERPRISE";
+        case 7:   return "WPA3_PSK";
+        case 8:   return "WPA2_WPA3_PSK";
+        case 9:   return "WAPI_PSK";
+        case 10:  return "WPA3_ENT_192";
+        default:  return "UNKNOWN";
+    }
+}
+
 void write_timestamp_string_to_file(const struct tm * time_info, FILE * fptr) {
-    char timestamp_str[23];
-    strftime(timestamp_str, 23*sizeof(char), "%Y-%m-%d %H:%M UTC+0", time_info);
-    fprintf(fptr, "%s\n", timestamp_str);
+    if (time_info->tm_year >= (2025 - 1900)) {
+        char timestamp_str[23];
+        strftime(timestamp_str, 23*sizeof(char), "%Y-%m-%d %H:%M UTC+0", time_info);
+        fprintf(fptr, "%s\n", timestamp_str);
+    } else {
+        fprintf(fptr, "NO TIME DATA\n");
+    }
 }
 
 void format_uint32t_ip_into_str(uint32_t ip, char * ip_str) {
@@ -95,13 +108,13 @@ err_t record_single_port_data_to_file(const time_t time, ipv4_info * ipv4_info, 
     }
 
     struct tm * time_info = localtime(&time);
-    char file_path[SIZEOF_PORT_ROOT+SIZEOF_TIME_STR+SIZEOF_EXTENSION];
+    char file_path[strlen(port_root_dir)+SIZEOF_TIME_STR+strlen(extension)];
 
     ensure_directory_exists(port_root_dir);
 
     strcpy(file_path, port_root_dir);
-    strftime(file_path+SIZEOF_PORT_ROOT-1, sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
-    strcpy(file_path+SIZEOF_PORT_ROOT+SIZEOF_TIME_STR-2, extension);
+    strftime(file_path+strlen(port_root_dir), sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
+    strcpy(file_path+strlen(port_root_dir)+SIZEOF_TIME_STR-1, extension);
 
     ESP_LOGI(TAG, "Writing port data to file %s", file_path);
 
@@ -122,7 +135,7 @@ err_t record_single_port_data_to_file(const time_t time, ipv4_info * ipv4_info, 
 
     // Count closed ports
     int closed_ports = 0;
-    for (uint16_t port = 0; port < MAX_PORT; ++port) {
+    for (uint16_t port = 0; port < MAX_PORT; port++) {
         uint8_t byte = ports[port / 8];
         if (!((byte >> (port % 8)) & 1)) {
             closed_ports++;
@@ -134,7 +147,7 @@ err_t record_single_port_data_to_file(const time_t time, ipv4_info * ipv4_info, 
     //fprintf(fptr, "PORT     STATE SERVICE\n");
     if (closed_ports != MAX_PORT) {
         fprintf(fptr, "PORT     STATE\n");
-        for (uint16_t port = 0; port < MAX_PORT; ++port) {
+        for (uint16_t port = 0; port < MAX_PORT; port++) {
             uint8_t byte = ports[port / 8];
             if ((byte >> (port % 8)) & 1) {
                 //fprintf(fptr, "%-8d open  %d\n", port, resolve_service_name(port));
@@ -180,13 +193,13 @@ err_t record_ipv4_list_data_to_file(const time_t time, ipv4_list * ipv4_list) {
     }
 
     struct tm * time_info = localtime(&time);
-    char file_path[SIZEOF_IPV4_INFO_ROOT+SIZEOF_TIME_STR+SIZEOF_EXTENSION];
+    char file_path[strlen(ipv4_info_root_dir)+SIZEOF_TIME_STR+strlen(extension)];
 
     ensure_directory_exists(ipv4_info_root_dir);
 
     strcpy(file_path, ipv4_info_root_dir);
-    strftime(file_path+SIZEOF_IPV4_INFO_ROOT-1, sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
-    strcpy(file_path+SIZEOF_IPV4_INFO_ROOT+SIZEOF_TIME_STR-2, extension);
+    strftime(file_path+strlen(ipv4_info_root_dir), sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
+    strcpy(file_path+strlen(ipv4_info_root_dir)+SIZEOF_TIME_STR-1, extension);
 
     ESP_LOGI(TAG, "Writing ipv4_list data to file %s", file_path);
 
@@ -226,19 +239,19 @@ err_t record_ipv4_list_data_to_file(const time_t time, ipv4_list * ipv4_list) {
     return ESP_OK;
 }
 
-err_t record_ap_records_data_to_file(const time_t time, wifi_ap_record_t * ap_records) {
+err_t record_ap_records_data_to_file(const time_t time, wifi_ap_record_t * ap_records, size_t ap_record_count) {
     if (ap_records == NULL) {
         return ESP_FAIL;
     }
 
     struct tm * time_info = localtime(&time);
-    char file_path[SIZEOF_AP_RECORDS_ROOT+SIZEOF_TIME_STR+SIZEOF_EXTENSION];
+    char file_path[strlen(ap_records_root_dir)+SIZEOF_TIME_STR+strlen(extension)];
 
     ensure_directory_exists(ap_records_root_dir);
 
     strcpy(file_path, ap_records_root_dir);
-    strftime(file_path+SIZEOF_AP_RECORDS_ROOT-1, sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
-    strcpy(file_path+SIZEOF_AP_RECORDS_ROOT+SIZEOF_TIME_STR-2, extension);
+    strftime(file_path+strlen(ap_records_root_dir), sizeof(file_path), "%Y-%m-%d-%H-%M-%S", time_info);
+    strcpy(file_path+strlen(ap_records_root_dir)+SIZEOF_TIME_STR-1, extension);
 
     ESP_LOGI(TAG, "Writing ap_records data to file %s", file_path);
 
@@ -251,44 +264,38 @@ err_t record_ap_records_data_to_file(const time_t time, wifi_ap_record_t * ap_re
     // Write the date/time
     write_timestamp_string_to_file(time_info, fptr);
 
-
-    return NULL;
-
-    // uint8_t bssid[6];                     /**< MAC address of AP */
+    // Writing these values for now...
     // uint8_t ssid[33];                     /**< SSID of AP */
     // uint8_t primary;                      /**< channel of AP */
     // int8_t  rssi;                         /**< signal strength of AP. Note that in some rare cases where signal strength is very strong, rssi values can be slightly positive */
     // wifi_auth_mode_t authmode;            /**< authmode of AP */
+    // uint8_t bssid[6];                     /**< MAC address of AP */
+
+    // Maybe?
     // wifi_cipher_type_t pairwise_cipher;   /**< pairwise cipher of AP */
     // wifi_cipher_type_t group_cipher;      /**< group cipher of AP */
 
+    fprintf(fptr, "SSID                            CH  RSSI AUTH            BSSID(MAC)         \n");
+    for (size_t i = 0; i < ap_record_count; i++) {
+        fprintf(fptr, "%-32s", ap_records[i].ssid);
+        fprintf(fptr, "%-4i", ap_records[i].primary);
+        fprintf(fptr, "%-5i", ap_records[i].rssi);
+        fprintf(fptr, "%-16s", auth_mode_to_string(ap_records[i].authmode));
+        fprintf(fptr, "%02X:%02X:%02X:%02X:%02X:%02X\n", ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2], ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
 
+    }
+    fprintf(fptr, "Done: %zu Access Points up\n", ap_record_count);
 
+    fclose(fptr);
 
-
-    //char ip_str[IP4ADDR_STRLEN_MAX];
-    //ipv4_info * ipv4_info;
-    //for (uint32_t i = 0; i < ipv4_list->size; i++) {
-    //    ipv4_info = get_from_ipv4_list_at(ipv4_list, i);
-    //    format_uint32t_ip_into_str(ipv4_info->ip, ip_str);
-    //    fprintf(fptr, "Report for %s\n", ip_str);
-    //    fprintf(fptr, "MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", ipv4_info->mac[0], ipv4_info->mac[1], ipv4_info->mac[2], ipv4_info->mac[3], ipv4_info->mac[4], ipv4_info->mac[5]);
-    //    fprintf(fptr, "Host is up\n");
-    //}
-
-    //uint32_t ip_count = UINT32_MAX - ipv4_list->subnet - 1; // the total count of ips to scan
-    //fprintf(fptr, "Done: %u IP addresses (%u hosts up)\n", ip_count, ipv4_list->size);
-
-    //fclose(fptr);
-
-    //fptr = fopen(file_path, "r");
-    //if (fptr) {
-    //    char buf[64];
-    //    while (fgets(buf, sizeof(buf), fptr)) {
-    //        printf("%s", buf); // This sends to Serial monitor
-    //    }
-    //    fclose(fptr);
-    //}
+    fptr = fopen(file_path, "r");
+    if (fptr) {
+        char buf[64];
+        while (fgets(buf, sizeof(buf), fptr)) {
+            printf("%s", buf); // This sends to Serial monitor
+        }
+        fclose(fptr);
+    }
 
     return ESP_OK;
 }

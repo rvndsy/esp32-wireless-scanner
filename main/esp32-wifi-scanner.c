@@ -15,7 +15,9 @@
 #include "esp_wifi_default.h"
 #include "esp_wifi_types.h"
 #include "freertos/FreeRTOS.h"
+#include "http-server.h"
 #include "lv_core/lv_obj.h"
+#include "lv_widgets/lv_label.h"
 #include "lv_widgets/lv_textarea.h"
 #include "lv_widgets/lv_list.h"
 #include "lwip/def.h"
@@ -38,18 +40,21 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
 
-static uint16_t found_wifi_count = 0;
+static size_t found_ap_count = 0;
 static uint8_t current_ap_record_index = 0;
 wifi_ap_record_t ap_records[MAX_SCAN_RESULTS];
 
 char ap_password_str[64];
-static const int MAX_WIFI_RETRY_ATTEMPT = 10;
-static int wifi_retry_count = 0;
+static const int MAX_AP_RETRY_ATTEMPT = 10;
 wifi_ap_record_t ap_info;
 
 esp_netif_t * netif = NULL;
 esp_netif_dns_info_t dns;
 /********/
+
+/* HTTP Server */
+static httpd_handle_t server = NULL;
+/***************/
 
 
 /*   LVGL   */
@@ -86,7 +91,7 @@ static SemaphoreHandle_t xGuiSemaphore;
 
 /*  Time   */
 #include "time.h"
-time_t now;
+time_t now = 0;
 char time_str[64];
 struct tm timeinfo;
 /***********/
@@ -113,6 +118,9 @@ typedef enum {
     NETWORK_SCANNING,
     NETWORK_CONNECTED,
     NETWORK_CONNECT_FAILED,
+    START_SERVE,
+    STOP_SERVE,
+    SERVING,
 } network_status_t;
 network_status_t network_status = NONE;
 
@@ -183,6 +191,15 @@ void sync_time() {
     network_status = NETWORK_CONNECTED;
 }
 
+bool update_time_check_if_valid() {
+    time(&now);
+    if (now < 1749221337) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
 esp_err_t wifi_init(void) {
     esp_err_t ret = esp_netif_init();
     if (ret != ESP_OK) {
@@ -202,6 +219,12 @@ esp_err_t wifi_init(void) {
         return ESP_FAIL;
     }
 
+    netif = esp_netif_create_default_wifi_ap();
+    if (netif == NULL) {
+        ESP_LOGE(TAG, "Failed to create default WiFi AP interface");
+        return ESP_FAIL;
+    }
+
     // Wi-Fi stack configuration parameters
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -210,6 +233,41 @@ esp_err_t wifi_init(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ret;
+}
+
+void wifi_start_ap(void) {
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = AP_SSID,
+            .ssid_len = strlen(AP_SSID),
+            .password = AP_PASSWORD,
+            .max_connection = AP_MAX_CONNECTIONS,
+            .authmode = AP_AUTH_MODE,
+        },
+    };
+
+    if (strlen(AP_PASSWORD) == 0) {
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "WiFi started as AP SSID: %s Password: %s", AP_SSID, AP_PASSWORD);
+}
+
+esp_ip4_addr_t get_ap_ip() {
+    esp_netif_ip_info_t ip_info;
+    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (netif == NULL) {
+        ESP_LOGE(TAG, "Failed to get netif handle for AP");
+    }
+    esp_netif_get_ip_info(netif, &ip_info);
+    return ip_info.gw;
 }
 
 int wifi_connect(const char* wifi_password) {
@@ -238,7 +296,7 @@ int wifi_connect(const char* wifi_password) {
     esp_wifi_disconnect();
     memset(&ap_info, 0, sizeof(ap_info));
     esp_wifi_connect();
-    for (int wifi_retry_count = 1; wifi_retry_count <= MAX_WIFI_RETRY_ATTEMPT; wifi_retry_count++) {
+    for (int wifi_retry_count = 1; wifi_retry_count <= MAX_AP_RETRY_ATTEMPT; wifi_retry_count++) {
         if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
             ESP_LOGI(TAG, "Reconnecting to AP...");
             esp_wifi_connect();
@@ -280,29 +338,29 @@ static esp_err_t wifi_disconnect(void) {
     return esp_wifi_disconnect();
 }
 
-esp_err_t wifi_scan(void) {
+esp_err_t wifi_search_ap_list(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
 
     // Start scanning
-    found_wifi_count = MAX_WIFI_RETRY_ATTEMPT;
+    found_ap_count = MAX_AP_RETRY_ATTEMPT;
     esp_err_t ret = esp_wifi_scan_start(NULL, true);
     if (ret != ESP_OK) {
         printf("wifi_scan() - esp_wifi_scan_start(): Failed to start scan: %s\n", esp_err_to_name(ret));
-        found_wifi_count = 0;
+        found_ap_count = 0;
         return ret;
     }
 
     // Get scan results
-    ret = esp_wifi_scan_get_ap_records(&found_wifi_count, ap_records);
+    ret = esp_wifi_scan_get_ap_records(&found_ap_count, ap_records);
     if (ret != ESP_OK) {
         printf("wifi_scan(): Failed to get wifi scan results: %s\n", esp_err_to_name(ret));
-        found_wifi_count = 0;
+        found_ap_count = 0;
         return ret;
     }
 
     // Print scan results
-    printf("Found %d access points:\n", found_wifi_count);
-    for (int i = 0; i < found_wifi_count; i++) {
+    printf("Found %zu access points:\n", found_ap_count);
+    for (int i = 0; i < found_ap_count; i++) {
         printf("SSID: %s, RSSI: %d\n", ap_records[i].ssid, ap_records[i].rssi);
     }
     return ret;
@@ -346,7 +404,7 @@ static void ipv4_scan_list_btn_cb(lv_obj_t * obj, lv_event_t event) {
 }
 
 static void show_found_wifi_list() {
-    if (found_wifi_count <= 0) {
+    if (found_ap_count <= 0) {
         if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
             lv_list_clean(wifi_list);
             lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WARNING, "No networks found!");
@@ -358,7 +416,7 @@ static void show_found_wifi_list() {
 
     if( xSemaphoreTake( xGuiSemaphore, portMAX_DELAY) == pdTRUE ) {
         lv_list_clean(wifi_list);
-        for (int i = 0; i < found_wifi_count; i++) {
+        for (int i = 0; i < found_ap_count; i++) {
             printf("Displaying wifi %i with ssid: %s\n", i, (char*)ap_records[i].ssid);
             lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, (char*)ap_records[i].ssid);
             wifi_btn_list[i] = btn;
@@ -408,22 +466,45 @@ static void show_found_ip_list() {
 }
 
 void wifi_scan_event_handler(lv_obj_t * obj, lv_event_t event) {
-    wifi_scan();
+    wifi_search_ap_list();
 }
 
 void wifi_task(void *arg) {
     while(1) {
         if (network_status == NETWORK_CONNECTED) {
+            // ...
+        } else if (network_status == SERVING) {
+            // ...
+        } else if (network_status == START_SERVE) {
+            wifi_start_ap();
+
+            vTaskDelay(100);
+
+            uint32_t ip = get_ap_ip().addr;
+            char * ip_str = ip4addr_ntoa((ip4_addr_t*)&ip);
+            ESP_LOGI(TAG, "AP gateway ip is %s", ip_str);
+
+            if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+                lv_label_set_text(server_http_ip, ip_str);
+                xSemaphoreGive(xGuiSemaphore);
+            }
+
+            server = start_webserver();
+
+            network_status = SERVING;
+        } else if (network_status == STOP_SERVE) {
+            if (server != NULL) {
+                stop_webserver(server);
+            }
+            network_status = NETWORK_SEARCHING;
         } else if (network_status == NETWORK_SCANNING) {
             if (scan_status == ARP_FULL) {
                 last_ipv4_list = arp_scan_full();
                 show_found_ip_list();
 
-                // wrong now btw
-                time(&now);
+                // Write to file
+                update_time_check_if_valid();
                 record_ipv4_list_data_to_file(now, last_ipv4_list);
-                //!!!!
-
             }
             if (scan_status == PORT_SINGLE) {
                 ipv4_info * last_ipv4_info = get_from_ipv4_list_at(last_ipv4_list, port_scan_target_index);
@@ -431,11 +512,9 @@ void wifi_task(void *arg) {
                 ESP_LOGI(TAG, "Starting port scan for target %s", ip4addr_ntoa((ip4_addr_t*)&ip));
                 scan_ports(*(esp_ip4_addr_t*)&ip, last_ipv4_port_map);
 
-                time(&now);
+                // Write to file
+                update_time_check_if_valid();
                 record_single_port_data_to_file(now, last_ipv4_info, last_ipv4_port_map);
-
-                //!!!!
-
             }
             if (scan_status == PORT_FULL) {
                 //last_ipv4_list = arp_scan_full();
@@ -460,18 +539,16 @@ void wifi_task(void *arg) {
                     xSemaphoreGive(xGuiSemaphore);
                 }
             }
-        } else if (network_status != NETWORK_CONNECTED) {
+        } else {
             network_status = NETWORK_SEARCHING;
-            wifi_scan();
+            wifi_search_ap_list();
 
-
-            //!!!!
-
+            // Write to file
+            update_time_check_if_valid();
+            record_ap_records_data_to_file(now, ap_records, found_ap_count);
 
             //current_ap_record_index = 0;
             //wifi_connect(""); // REMOVE LATER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-
 
             show_found_wifi_list();
         }
@@ -498,6 +575,18 @@ void arp_full_scan_btn_cb(lv_obj_t * obj, lv_event_t event) {
     }
     network_status = NETWORK_SCANNING;
     scan_status = ARP_FULL;
+}
+
+void serve_switch_cb(lv_obj_t * obj, lv_event_t event) {
+    if (event == LV_EVENT_VALUE_CHANGED) {
+        bool state = lv_switch_get_state(obj);
+        if (state == true) {
+            network_status = START_SERVE;
+        } else {
+            ESP_LOGI(TAG, "Switch is OFF");
+            network_status = NETWORK_SEARCHING;
+        }
+    }
 }
 
 void gui_task(void *pvParameter) {
@@ -550,19 +639,15 @@ void gui_task(void *pvParameter) {
     lv_obj_move_background(wifi_popup_connect);
 
 
-    //lv_label_set_text(wifi_connected_status_label, "Not connected to Wi-Fi...");
+    // // Setting event handlers for GUI objects...
     lv_obj_set_event_cb(wifi_popup_connect_btn, mbox_connect_wifi_event_cb);
-
-    //lv_label_set_text(wifi_connected_status_label, "Not connected to Wi-Fi...");
     lv_obj_set_event_cb(ipv4_scan_btn, arp_full_scan_btn_cb);
-
-    //buildSettings();
+    lv_obj_set_event_cb(serve_switch, serve_switch_cb);
 
     //tryPreviousNetwork();
 
     //lv_example_flex_1();
 
-    // // Setting event handlers for GUI objects...
 
     // This part should run indefinitely all the time
     while (1) {

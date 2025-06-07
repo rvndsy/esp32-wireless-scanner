@@ -1,4 +1,5 @@
 #include "gui.h"
+#include "conf.h"
 
 #include "lv_core/lv_disp.h"
 #include "lv_core/lv_obj.h"
@@ -9,6 +10,7 @@
 #include "lv_widgets/lv_keyboard.h"
 #include "lv_widgets/lv_label.h"
 #include "lv_widgets/lv_list.h"
+#include "lv_widgets/lv_switch.h"
 #include "lv_widgets/lv_tabview.h"
 #include "lv_widgets/lv_textarea.h"
 
@@ -39,9 +41,12 @@ lv_obj_t * ipv4_scan_tab;
 lv_obj_t * ipv4_scan_btn;
 lv_obj_t * ipv4_scan_list;
 
-/* Placeholder tabs */
-lv_obj_t * tab3;
-lv_obj_t * tab4;
+/* Tab for serving scanned data */
+lv_obj_t * server_tab;
+lv_obj_t * serve_switch;
+lv_obj_t * server_ap_ssid_label;
+lv_obj_t * server_ap_password;
+lv_obj_t * server_http_ip;
 
 /* Wifi connect pop-up */
 lv_obj_t * wifi_popup_connect;
@@ -109,10 +114,21 @@ void build_gui(void) {
     lv_obj_set_size(ipv4_scan_list, DISPLAY_W - 20, DISPLAY_H);
     lv_obj_align(ipv4_scan_list, ipv4_scan_tab, LV_ALIGN_IN_TOP_MID, 0, 40);
 
+    server_tab = lv_tabview_add_tab(tabview, "Serve");
 
-    // Placeholders...
-    tab3 = lv_tabview_add_tab(tabview, "Tab3");
-    tab4 = lv_tabview_add_tab(tabview, "Tab4");
+    server_ap_ssid_label = lv_label_create(server_tab, NULL);
+    lv_obj_align(server_ap_ssid_label, server_tab, LV_ALIGN_IN_TOP_MID, -20, 20);
+    lv_label_set_text(server_ap_ssid_label, CONFIG_LWIP_LOCAL_HOSTNAME);
+    server_ap_password = lv_label_create(server_tab, NULL);
+    lv_obj_align(server_ap_password, server_tab, LV_ALIGN_IN_TOP_MID, -20, 40);
+    lv_label_set_text(server_ap_password, AP_PASSWORD);
+    server_http_ip = lv_label_create(server_tab, NULL);
+    lv_obj_align(server_http_ip, server_tab, LV_ALIGN_IN_TOP_MID, -20, 60);
+    lv_label_set_text(server_http_ip, "NULL"); // change after wifi initialisation or when starting AP...
+    serve_switch = lv_switch_create(server_tab, NULL);
+    lv_obj_align(serve_switch, server_tab, LV_ALIGN_CENTER, 0, 50);
+    lv_obj_set_size(serve_switch, 120, 60);         // assign callback to start server
+
 
     //wifi_scan_list_label = lv_label_create(wifi_scan_tab1, NULL);
     //lv_obj_add_style(wifi_scan_list_label, LV_TABVIEW_PART_BG, &desc_text_style);

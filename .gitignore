@@ -13,6 +13,7 @@ build/
 main/.cache/
 
 compile_commands.json
+components/
 !components/lvgl__lvgl_esp32_drivers/
 
 
