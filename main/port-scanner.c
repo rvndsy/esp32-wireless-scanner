@@ -1,5 +1,6 @@
 #include "port-scanner.h"
 #include "conf.h"
+#include "lwip/priv/tcp_priv.h"
 #include "scanner.h"
 
 #include "esp_log.h"
@@ -27,20 +28,24 @@ typedef struct tcp_conn_ctx {
 tcp_conn_ctx * ctx_list[MAX_ONGOING_CONNECTIONS];
 uint8_t * local_port_map;
 
-err_t tcp_connection_finished_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
-    //printf("Connection status changed...\n");
-    tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
-    if (err == ERR_OK) {
-        printf("OK: %u\n", tpcb->remote_port);
-        local_port_map[ctx->port / 8] |= (0x1 << (ctx->port % 8));
-    } else {
-        // This doesnt happen for some reason... thus the need for a timeout
-        printf("FAIL: %u\n", tpcb->remote_port);
+err_t tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    if (p != NULL) {
+        pbuf_free(p);
     }
+    return ERR_OK;
+}
 
+void tcp_err_cb(void *arg, err_t err) {
+    tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
     if (ctx == NULL) {
-        return ERR_ARG;
+        return;
     }
+    // wrong
+    //if (err == ERR_ABRT) {
+    //    printf("\t\tUP: %u\n", ctx->port);
+    //    local_port_map[ctx->port / 8] |= (0x1 << (ctx->port % 8));
+    //}
+    printf("DOWN: %u\n", ctx->port);
 
     if (ctx->timeout_timer != NULL) {
         esp_timer_stop(ctx->timeout_timer);
@@ -48,23 +53,43 @@ err_t tcp_connection_finished_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
         ctx->timeout_timer = NULL;
     }
 
-    if (ctx->lock == true) {
-        ctx->lock = false;
-        //if (ctx->pcb->state != CLOSED) {
-        //    tcp_close(ctx->pcb);
-        //}
+    ctx->lock = false;
+}
+
+err_t tcp_connection_finished_cb(void * arg, struct tcp_pcb * tpcb, err_t err) {
+    //printf("Connection status changed...\n");
+    tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
+    if (ctx == NULL) {
+        return ERR_ARG;
     }
+    if (err == ERR_OK) {
+        printf("\t\tUP: %u\n", tpcb->remote_port);
+        local_port_map[ctx->port / 8] |= (0x1 << (ctx->port % 8));
+    } else {
+        // This doesnt happen for some reason... thus the need for a timeout
+        printf("DOWN: %u\n", tpcb->remote_port);
+    }
+
+
+    if (ctx->timeout_timer != NULL) {
+        esp_timer_stop(ctx->timeout_timer);
+        esp_timer_delete(ctx->timeout_timer);
+        ctx->timeout_timer = NULL;
+    }
+
+    ctx->lock = false;
 
     return err;
 }
 
-void connection_timeout_cb(void *arg) {
+void connection_timeout_cb(void * arg) {
     tcp_conn_ctx * ctx = (tcp_conn_ctx*)arg;
 
     //printf("Timeout on port %i\n", ctx->port);
     if (ctx == NULL) {
         return;
     }
+    printf("DOWN: %u\n", ctx->port);
     ctx->lock = false;
     //printf(".\n");
 }
@@ -72,7 +97,7 @@ void connection_timeout_cb(void *arg) {
 uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
     memset(port_map, 0x0, OPEN_PORT_MAP_SIZE);
     local_port_map = port_map;
-    ESP_LOGI(TAG, "Initializing port scan for %s\n", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
+    ESP_LOGI(TAG, "Starting port scan for %s\n", ip4addr_ntoa((ip4_addr_t*)&target_ip.addr));
 
     //ESP_LOGI(TAG, "scan_ports(): Checking if host is up...");
     //ipv4_info * check_if_up = arp_scan_single(target_ip);
@@ -81,7 +106,7 @@ uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
     //    return NULL;
     //}
     //free(check_if_up);
-    //ESP_LOGI(TAG, "scan_ports(): Host up, initializing scan");
+    //ESP_LOGI(TAG, "scan_ports(): Host up, starting port scan");
 
     for (int i = 0; i < MAX_ONGOING_CONNECTIONS; i++) {
         ctx_list[i] = calloc(1, sizeof(tcp_conn_ctx));
@@ -96,6 +121,7 @@ uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
     // Target ip in ip_addr_t so lwip understands
     ip_addr_t ip_addr;
     ip_addr.u_addr.ip4.addr = target_ip.addr;
+    ip_addr.type = IPADDR_TYPE_V4;
 
     // in case anyone defined MAX_PORT too large
     uint16_t max_port = MAX_PORT;
@@ -111,14 +137,16 @@ uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
                 continue;
             }
             if (ctx_list[i]->lock == false) {
-                if (ctx_list[i]->pcb != NULL && (ctx_list[i]->pcb->state != CLOSED || ctx_list[i]->pcb->state != ESTABLISHED)) {
-
+                ctx_list[i]->lock = true;
+                if (ctx_list[i]->pcb != NULL && ctx_list[i]->pcb->state != CLOSED) {
+                    ctx_list[i]->pcb = NULL;
                 }
                 ctx_list[i]->pcb = tcp_new();
-                if (ctx_list[i] == NULL) {
+                if (ctx_list[i]->pcb == NULL) {
                     ESP_LOGE(TAG, "scan_ports(): Error creating pcb #%i with tcp_new()", i);
                     return NULL;
                 }
+                vTaskDelay(pdMS_TO_TICKS(25));
                 break;
             }
             i++;
@@ -128,7 +156,13 @@ uint8_t * scan_ports(const esp_ip4_addr_t target_ip, uint8_t * port_map) {
 
         //ESP_LOGI(TAG, "scan_ports(): Connecting to port %i", port);
         tcp_arg(ctx_list[i]->pcb, ctx_list[i]);
-        tcp_connect(ctx_list[i]->pcb, &ip_addr, port, tcp_connection_finished_cb);
+        tcp_err(ctx_list[i]->pcb, tcp_err_cb);
+        tcp_recv(ctx_list[i]->pcb, tcp_recv_cb);
+        err_t err = tcp_connect(ctx_list[i]->pcb, &ip_addr, port, tcp_connection_finished_cb);
+        if (err != ERR_OK) {
+            ESP_LOGI(TAG,"Something wen't wrong with tcp_connect");
+            return NULL;
+        }
 
         ctx_list[i]->lock = true;
         esp_timer_create_args_t timer_args = {

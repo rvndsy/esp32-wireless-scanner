@@ -168,10 +168,10 @@ void sync_time() {
         return;
     }
     network_status = SYNCING_TIME;
-    const int max_attempts = 200; //this may not be quick?
+    //this may not be quick?
     int attempts = 0;
     while (now < 1749221337 && attempts < SNTP_SYNC_ATTEMPTS) {
-        ESP_LOGI(TAG, "Attempting to sync time by SNTP %d/%d...", attempts, max_attempts);
+        ESP_LOGI(TAG, "Attempting to sync time by SNTP %d/%d...", attempts, SNTP_SYNC_ATTEMPTS);
         time(&now);
         localtime_r(&now, &timeinfo);
         vTaskDelay(pdMS_TO_TICKS(SNTP_SYNC_ATTEMPT_DELAY));
@@ -573,21 +573,27 @@ void wifi_task(void *arg) {
             show_found_wifi_list();
             vTaskDelay(pdMS_TO_TICKS(3000));
         }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void create_wifi_task() {
     network_status = NETWORK_SEARCHING;
-    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096 * 4, NULL, 4, &wifi_task_handle, 0);
+    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096 * 4, NULL, 2, &wifi_task_handle, 0);
 }
 
 void wifi_connect_wifi_event_cb(lv_obj_t * obj, lv_event_t event) {
+    if (event == LV_EVENT_DEFOCUSED) {
+        return;
+    }
     network_status = NETWORK_CONNECTING;
 }
 
 void arp_full_scan_btn_cb(lv_obj_t * obj, lv_event_t event) {
     if (scan_status != NO_SCAN) {
+        return;
+    }
+    if (event == LV_EVENT_DEFOCUSED) {
         return;
     }
     if (network_status != NETWORK_CONNECTED) {
@@ -668,16 +674,9 @@ void statusbar_task(void *args) {
             update_label(status_label, "DOWN/ERR", NULL, NULL);
         }
         update_time_check_if_valid();
-        if (network_status == SYNCING_TIME) {
-            if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                update_label(time_label, "...", (char*)statusbar_dots_from_state(&state), NULL);
-                xSemaphoreGive(xGuiSemaphore);
-            }
-        } else {
-            if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
-                lv_label_set_text_fmt(time_label, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-                xSemaphoreGive(xGuiSemaphore);
-            }
+        if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY) == pdTRUE) {
+            lv_label_set_text_fmt(time_label, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+            xSemaphoreGive(xGuiSemaphore);
         }
         state++;
         state = state % 4; //4 states...

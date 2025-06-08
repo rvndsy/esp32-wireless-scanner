@@ -24,8 +24,8 @@
 //#define ESP_PORT 8080                     // used for opening a socket on esp32 (not required for now)
 #define MIN_PORT 1                          // must be greater than 0 (inclusive)
 #define MAX_PORT 100                        // must be less than or equal to MAX_POSSIBLE_PORT (inclusive)
-#define MAX_ONGOING_CONNECTIONS 16          // must be between 0 and max open port count defined in sdkconfig (don't recommend going above ~20)
-#define TCP_CONN_TIMEOUT_MS 5000            // how long to wait for a single tcp connection to time out (lwip doesn't have timeout?)
+#define MAX_ONGOING_CONNECTIONS 20          // must be between 0 and max open port count defined in sdkconfig (don't recommend going above ~20)
+#define TCP_CONN_TIMEOUT_MS 15000            // how long to wait for a single tcp connection to time out (lwip doesn't have timeout?)
 
 // == DONT CHANGE ==
 #define OPEN_PORT_MAP_SIZE MAX_PORT / 8 + 1 // size of port bitmap storage in bytes (uint8_t's) while scanning ports with TCP
@@ -34,7 +34,7 @@
 
 /* WiFi/AP scanning/searching and connecting */
 #define MAX_SCAN_RESULTS 20                 // how many WiFi/AP's we store from last scan (in code search means 'scanning' for AP's)
-#define DEFAULT_WIFI_INPUT_PASSWORD ""      // in popup to enter WiFi/AP password, autofill this in on startup (touch is broken - keyboard is hard to use)
+#define DEFAULT_WIFI_INPUT_PASSWORD "Password321"      // in popup to enter WiFi/AP password, autofill this in on startup (touch is broken - keyboard is hard to use)
 /***********/
 
 /* SNTP/Time syncing */
