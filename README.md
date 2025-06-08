@@ -17,6 +17,7 @@ The building and flashing commands are assuming you have `esp-idf` repository cl
 - [ESP-IDF v4.4.8](https://github.com/espressif/esp-idf/releases/tag/v4.4.8)
 - [LVGL v7.11](https://github.com/lvgl/lvgl/releases/tag/v7.11.0)
 - [LVGL ESP32 drivers (commit 9fed1cc4)](https://github.com/lvgl/lvgl_esp32_drivers/commit/9fed1cc47b5a45fec6bae08b55d2147d3b50260c), the provided drivers in this repo have a few fixes that are required for this project
+- [LittleFS v1.16.4](https://components.espressif.com/components/joltwallet/littlefs/versions/1.16.4?language=en)
 - lwip (provided by ESP-IDF)
 
 ## Linux
@@ -41,7 +42,7 @@ This will install and store esp-idf files locally within this repository (no roo
 
 ### 4. Flash onto ESP32
 
-1. `./esp-idf/tools/idf.py flash` or `./esp-idf/tools/idf.py -p <PORT> flash` (port is something similar to /dev/ttyUSB0, if your user has permission issues [then add it to `dialout` or `uucp` group](possiblehttps://support.arduino.cc/hc/en-us/articles/360016495679-Fix-port-access-on-Linux))
+1. `./esp-idf/tools/idf.py flash` or `./esp-idf/tools/idf.py -p <PORT> flash` (port is something similar to /dev/ttyUSB0, if your user has permission issues [then add it to `dialout` or `uucp` group](https://support.arduino.cc/hc/en-us/articles/360016495679-Fix-port-access-on-Linux))
 
 Alternatively, run `./build.sh` to build this project (assuming esp-idf is cloned in ./esp-idf) or `./run.sh` to build & flash it.
 
