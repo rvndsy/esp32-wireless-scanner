@@ -1,3 +1,8 @@
+/*
+*
+* MOSTLY AI GENERATED CODE
+*
+*/
 #include "conf.h"
 #include "file-writing.h"
 #include "esp_err.h"
