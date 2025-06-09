@@ -55,4 +55,9 @@ Alternatively, run `./build.sh` to build this project (assuming esp-idf is clone
 1. Clone this repository, including any submodules in ./components
 2. Use the Windows ESP-IDF software to build and flash this project with similar commands to the **Linux** section.
 
+# Example photos
 
+![Wifi/AP listing tab on ILI9341](./examples/wifi-tab.png)
+![Scan tab on ILI9341](./examples/scan-tab.png)
+![HTTP server tab on ILI9341](./examples/server-tab.png)
+![Webpage for reading results](./examples/webpage.png)
