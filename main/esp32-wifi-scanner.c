@@ -30,7 +30,7 @@
 #include "nvs_flash.h"
 
 #include "conf.h"
-#include "scanner.h"
+#include "net-scanner.h"
 #include "port-scanner.h"
 #include "file-writing.h"
 

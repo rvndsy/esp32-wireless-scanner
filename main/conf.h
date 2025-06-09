@@ -1,7 +1,7 @@
 #ifndef CONF_H_
 #define CONF_H_
 
-#define TAG "WiFi_Scanner"
+#define TAG "Wireless_Scanner"
 
 /* ARP scanning */
 // ARP scanning uses the ARP table records to determine if an IP/device is up (ipv4 only for now).

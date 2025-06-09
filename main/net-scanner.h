@@ -1,5 +1,5 @@
-#ifndef SCANNER_H_
-#define SCANNER_H_
+#ifndef NET_SCANNER_H_
+#define NET_SCANNER_H_
 
 #include "esp_netif_ip_addr.h"
 #include <stdint.h>
@@ -30,4 +30,4 @@ extern void add_to_ipv4_list(ipv4_list * ipv4_list, uint32_t ip, uint8_t mac[6])
 extern void delete_ipv4_list(ipv4_list * ipv4_list);
 extern ipv4_info * arp_scan_single(const esp_ip4_addr_t target_ip); // argument target_ip in network order
 
-#endif
+#endif // NET_SCANNER_H_

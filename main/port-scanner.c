@@ -1,7 +1,7 @@
 #include "port-scanner.h"
 #include "conf.h"
 #include "lwip/priv/tcp_priv.h"
-#include "scanner.h"
+#include "net-scanner.h"
 
 #include "esp_log.h"
 #include "esp_netif_ip_addr.h"

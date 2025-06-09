@@ -16,7 +16,7 @@
 
 #include "conf.h"
 
-#include "scanner.h"
+#include "net-scanner.h"
 
 // Global definitions
 #define TAG "ARP_Scanner"

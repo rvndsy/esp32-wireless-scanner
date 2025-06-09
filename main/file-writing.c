@@ -4,7 +4,7 @@
 #include "esp_netif.h"
 #include "lwip/ip4_addr.h"
 #include "esp_netif_ip_addr.h"
-#include "scanner.h"
+#include "net-scanner.h"
 
 #include <stdio.h>
 #include <string.h>

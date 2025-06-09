@@ -3,7 +3,7 @@
 
 #include "esp_wifi_types.h"
 #include "lwip/err.h"
-#include "scanner.h"
+#include "net-scanner.h"
 #include <time.h>
 
 

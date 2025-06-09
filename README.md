@@ -55,6 +55,21 @@ Alternatively, run `./build.sh` to build this project (assuming esp-idf is clone
 1. Clone this repository, including any submodules in ./components
 2. Use the Windows ESP-IDF software to build and flash this project with similar commands to the **Linux** section.
 
+# Architecture
+
+Each of the 6 .c files in `./main` have a role:
+
+- `esp32-wifi-scanner.c` contains the `app_main()` function that initializes the ESP32, LittleFS, other necessities and initializes the main threads. The calls to create threads and communication between them happen here. The two most important threads are the LVGL GUI task `gui_task` (initializes LVGL, drivers, LVGL timer, and the GUI elements from `gui.c`) and the task that manages everything to do with networking (looking for AP's, connecting to an AP, executing ARP and port scans, ) called `wifi_task`. Most of the LVGL button callbacks are located here.
+- `gui.c` contains functions to initialize the main bulk of graphical elements. Some LVGL functions to create buttons (ex. for AP and IP lists) and to update labels (ex. status bar) are in `esp32-wifi-scanner.c`.
+- `port-scanner.c` contains the logic for scanning ports of some IPv4 address.
+- `net-scanner.c` contains the logic for scanning a subnet (or a single host) with ARP requests.
+- `http-server.c` is the HTTP server and all the backend logic that always gets started in serving/softAP mode.
+- `file-writing.c` contains functions to write the last recorded information from any scans into files that are on the LittleFS filesystem. The functions are called in `app_main()` immediately after finishing any scan.
+
+A directory `./server-image` may contain files that are copied to the LittleFS root directory to be used by the HTTP server.
+
+Certainly some improvements can be made in the structure of code and files. This project was a personal exercise to learn a few different libraries on an ESP32 and I had no expectations of how it would turn out from the start.
+
 # Example photos
 
 ![Wifi/AP listing tab on ILI9341](./examples/wifi-tab.png)
